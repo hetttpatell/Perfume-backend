@@ -149,6 +149,28 @@ export const createProduct = async (req, res, next) => {
         scent_family: 'Haute Parfumerie'
       });
 
+    // Associate temporary uploaded images with the new product ID and delete unused ones
+    const validUrls = [];
+    const mainImg = imageUrl || newProduct.image_url;
+    const gallImgs = galleryImages || newProduct.gallery_images;
+    if (mainImg) validUrls.push(mainImg);
+    if (gallImgs && Array.isArray(gallImgs)) {
+      validUrls.push(...gallImgs);
+    }
+
+    if (validUrls.length > 0) {
+      await supabaseAdmin
+        .from('product_images')
+        .update({ product_id: productId })
+        .eq('product_id', 'temp-product')
+        .in('image_url', validUrls);
+    }
+
+    await supabaseAdmin
+      .from('product_images')
+      .delete()
+      .eq('product_id', 'temp-product');
+
     res.status(201).json({
       success: true,
       message: 'Product created successfully',
@@ -206,6 +228,36 @@ export const updateProduct = async (req, res, next) => {
         .eq('product_id', id);
     }
 
+    // Clean up product_images table to match the new image list
+    if (updates.imageUrl !== undefined || updates.galleryImages !== undefined) {
+      const validUrls = new Set();
+      const currentMain = updates.imageUrl !== undefined ? updates.imageUrl : updated.image_url;
+      const currentGallery = Array.isArray(updates.galleryImages) 
+        ? updates.galleryImages 
+        : (updated.gallery_images || []);
+
+      if (currentMain) validUrls.add(currentMain);
+      currentGallery.forEach(url => validUrls.add(url));
+
+      const { data: dbImages } = await supabaseAdmin
+        .from('product_images')
+        .select('id, image_url')
+        .eq('product_id', id);
+
+      if (dbImages && dbImages.length > 0) {
+        const toDelete = dbImages
+          .filter(img => !validUrls.has(img.image_url))
+          .map(img => img.id);
+
+        if (toDelete.length > 0) {
+          await supabaseAdmin
+            .from('product_images')
+            .delete()
+            .in('id', toDelete);
+        }
+      }
+    }
+
     res.status(200).json({
       success: true,
       message: 'Product updated successfully',
@@ -223,6 +275,20 @@ export const deleteProduct = async (req, res, next) => {
       return res.status(400).json({ success: false, error: 'Product ID is required' });
     }
 
+    // Cascade-delete all child rows that reference this product
+    // (Supabase FK constraints will block deletion if these still exist)
+    const childTables = ['wishlist', 'product_images', 'product_sizes', 'product_scent_details'];
+    for (const table of childTables) {
+      const { error: childErr } = await supabaseAdmin
+        .from(table)
+        .delete()
+        .eq('product_id', id);
+      if (childErr) {
+        console.warn(`Warning: Failed to clean ${table} for product ${id}:`, childErr.message);
+      }
+    }
+
+    // Now delete the product itself
     const { error } = await supabaseAdmin
       .from('products')
       .delete()

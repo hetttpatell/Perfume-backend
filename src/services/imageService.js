@@ -1,9 +1,9 @@
 import sharp from 'sharp';
-import { supabaseAdmin, supabase } from '../config/supabase.js';
+import { supabaseAdmin } from '../config/supabase.js';
 
 /**
  * Process raw image buffer (PNG, JPG, JPEG, WEBP, etc.), convert to .webp automatically,
- * upload to Supabase Storage, and save URL to products table
+ * and save as base64 data URI in the database for faster loading and direct retrieval
  */
 export const processAndStoreWebpImage = async ({
   fileBuffer,
@@ -17,14 +17,18 @@ export const processAndStoreWebpImage = async ({
   }
 
   // 1. Convert any incoming raw image (PNG, JPG, WEBP) to WebP format using Sharp
+  // Resizing to max 1000x1000 and quality 85 to optimize Base64 string payload size
   const webpBuffer = await sharp(fileBuffer)
-    .resize({ width: 1600, height: 1600, fit: 'inside', withoutEnlargement: true })
+    .resize({ width: 1000, height: 1000, fit: 'inside', withoutEnlargement: true })
     .webp({ quality: 85, effort: 4 })
     .toBuffer();
 
   const metadata = await sharp(webpBuffer).metadata();
 
-  // 2. Generate clean filename for storage
+  // 2. Generate base64 data URI in webp format directly
+  const imageUrl = `data:image/webp;base64,${webpBuffer.toString('base64')}`;
+
+  // Generate a clean dummy filepath for reference
   const sanitizeName = (originalName || 'image')
     .replace(/\.[^/.]+$/, '')
     .toLowerCase()
@@ -34,27 +38,7 @@ export const processAndStoreWebpImage = async ({
   const safeProdId = (productId || 'general').replace(/[^a-z0-9]/g, '-');
   const filePath = `products/${safeProdId}/${sanitizeName}-${timestamp}.webp`;
 
-  // 3. Upload converted WebP buffer to Supabase Storage bucket 'product-images'
-  let imageUrl = '';
-  const { error: uploadError } = await supabaseAdmin.storage
-    .from('product-images')
-    .upload(filePath, webpBuffer, {
-      contentType: 'image/webp',
-      cacheControl: '3600',
-      upsert: true
-    });
-
-  if (uploadError) {
-    console.warn(`Storage upload warning (${uploadError.message}). Using base64 data URI WebP fallback.`);
-    imageUrl = `data:image/webp;base64,${webpBuffer.toString('base64')}`;
-  } else {
-    const { data: urlData } = supabase.storage
-      .from('product-images')
-      .getPublicUrl(filePath);
-    imageUrl = urlData.publicUrl;
-  }
-
-  // 4. Safely insert into product_images table without throwing foreign key constraint errors
+  // 3. Safely insert into product_images table
   let record = null;
   if (productId && productId !== 'temp-product') {
     const { data: insertedRecord, error: dbError } = await supabaseAdmin

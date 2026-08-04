@@ -8,7 +8,7 @@ const INITIAL_PRODUCTS = [
     id: 'n19-extrait',
     name: 'LUNE EXTRAIT DE PARFUM',
     french_name: "L'Extrait Flacon Baudruchage",
-    category: 'EXTRAIT',
+    category: 'EXTRAIT DE PARFUM',
     subtitle: 'FLORENTINE IRIS & GALBANUM ESSENCE',
     price: 340.00,
     in_stock: true,
@@ -122,6 +122,20 @@ const INITIAL_LOCATIONS = [
 
 async function seed() {
   console.log('🌱 Seeding Supabase database...');
+
+  // Seed Categories
+  const INITIAL_CATEGORIES = [
+    { id: 'extrait-de-parfum', name: 'EXTRAIT DE PARFUM', french_name: 'Extrait Pur de Parfum', description: 'Highest concentration pure perfume essences with exceptional sillage.', is_active: true },
+    { id: 'eau-de-parfum', name: 'EAU DE PARFUM', french_name: 'Vaporisateur de Parfum', description: 'Sophisticated everyday fragrance formulations in luxury flacons.', is_active: true },
+    { id: 'body-care', name: 'BODY CARE', french_name: 'Soins Corporels', description: 'Nourishing botanical body oils and velvet lotion elixirs.', is_active: true }
+  ];
+
+  for (const cat of INITIAL_CATEGORIES) {
+    await supabaseAdmin.from('categories').upsert(cat);
+  }
+
+  // Clean up 'testing' category if it exists
+  await supabaseAdmin.from('categories').delete().eq('id', 'testing');
 
   // Seed Products
   for (const prod of INITIAL_PRODUCTS) {

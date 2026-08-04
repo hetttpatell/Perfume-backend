@@ -113,3 +113,39 @@ export const getMe = async (req, res, next) => {
     next(error);
   }
 };
+
+export const refreshSession = async (req, res, next) => {
+  try {
+    const { refreshToken } = req.body;
+    if (!refreshToken) {
+      return res.status(400).json({ success: false, error: 'Refresh token is required' });
+    }
+
+    const { data, error } = await supabase.auth.refreshSession({ refresh_token: refreshToken });
+
+    if (error || !data.session) {
+      return res.status(401).json({ success: false, error: error?.message || 'Invalid refresh token' });
+    }
+
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', data.user.id)
+      .single();
+
+    const userData = {
+      ...data.user,
+      role: profile?.role || 'customer',
+      profile: profile || null
+    };
+
+    res.status(200).json({
+      success: true,
+      message: 'Session refreshed successfully',
+      user: userData,
+      session: data.session
+    });
+  } catch (error) {
+    next(error);
+  }
+};
