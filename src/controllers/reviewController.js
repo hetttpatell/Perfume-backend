@@ -1,4 +1,4 @@
-import { supabase } from '../config/supabase.js';
+import { supabase, supabaseAdmin } from '../config/supabase.js';
 import { z } from 'zod';
 
 export const getReviewsSchema = z.object({
@@ -76,3 +76,52 @@ export const addReview = async (req, res, next) => {
     next(error);
   }
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADMIN: List ALL reviews across all products (with product name)
+// ─────────────────────────────────────────────────────────────────────────────
+export const getAllReviews = async (req, res, next) => {
+  try {
+    const { data: reviews, error } = await supabaseAdmin
+      .from('reviews')
+      .select('*, product:products(name)')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      return res.status(500).json({ success: false, error: error.message });
+    }
+
+    res.status(200).json({
+      success: true,
+      count: (reviews || []).length,
+      reviews: reviews || []
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADMIN: Delete a review by ID
+// ─────────────────────────────────────────────────────────────────────────────
+export const deleteReview = async (req, res, next) => {
+  try {
+    const { id } = req.body;
+    if (!id) {
+      return res.status(400).json({ success: false, error: 'Review ID is required' });
+    }
+
+    const { error } = await supabaseAdmin.from('reviews').delete().eq('id', id);
+    if (error) {
+      return res.status(500).json({ success: false, error: error.message });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Review deleted successfully'
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+

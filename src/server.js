@@ -17,6 +17,7 @@ import locationRoutes from './routes/locationRoutes.js';
 import discountRoutes from './routes/discountRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
 import wishlistRoutes from './routes/wishlistRoutes.js';
+import contactRoutes from './routes/contactRoutes.js';
 
 dotenv.config();
 
@@ -69,6 +70,7 @@ app.use('/api/v1/locations', locationRoutes);
 app.use('/api/v1/discounts', discountRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/wishlist', wishlistRoutes);
+app.use('/api/v1/contact', contactRoutes);
 
 // Fallback Route Aliases (Handles clients sending requests without /api/v1 prefix)
 app.use('/auth', authRoutes);
@@ -80,6 +82,7 @@ app.use('/locations', locationRoutes);
 app.use('/discounts', discountRoutes);
 app.use('/admin', adminRoutes);
 app.use('/wishlist', wishlistRoutes);
+app.use('/contact', contactRoutes);
 
 // Error Handling Middlewares
 app.use(notFoundHandler);
@@ -87,7 +90,7 @@ app.use(errorHandler);
 
 if (process.env.NODE_ENV !== 'test') {
   app.listen(PORT, () => {
-    console.log(`🔒 Lune Secured Backend Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
+    console.log(`🔒 Lune Secured Backend Server v1.1 running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
   });
 }
 

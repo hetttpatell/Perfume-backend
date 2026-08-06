@@ -1,5 +1,6 @@
 import express from 'express';
 import { 
+  uploadHeroImage,
   uploadProductImage, 
   uploadBatchProductImages,
   getProductImages, 
@@ -18,11 +19,14 @@ import {
   updateDiscount,
   deleteDiscount
 } from '../controllers/adminController.js';
+import { getAllReviews, deleteReview } from '../controllers/reviewController.js';
+import { getAllContactMessages, updateContactMessageStatus, deleteContactMessage } from '../controllers/contactController.js';
 import { uploadSingleImage, uploadMultipleImages } from '../middleware/upload.js';
 
 const router = express.Router();
 
-// POST endpoint for single and batch image uploads with automatic .webp conversion
+// POST endpoint for single, batch, and hero section image uploads with automatic .webp conversion
+router.post('/images/upload-hero', uploadSingleImage, uploadHeroImage);
 router.post('/images/upload', uploadSingleImage, uploadProductImage);
 router.post('/images/upload-batch', uploadMultipleImages, uploadBatchProductImages);
 
@@ -52,5 +56,14 @@ router.post('/discounts/list', getDiscounts);
 router.post('/discounts/create', createDiscount);
 router.post('/discounts/update', updateDiscount);
 router.post('/discounts/delete', deleteDiscount);
+
+// Review moderation endpoints
+router.post('/reviews/list', getAllReviews);
+router.post('/reviews/delete', deleteReview);
+
+// Contact / Support message endpoints
+router.post('/contacts/list', getAllContactMessages);
+router.post('/contacts/update-status', updateContactMessageStatus);
+router.post('/contacts/delete', deleteContactMessage);
 
 export default router;

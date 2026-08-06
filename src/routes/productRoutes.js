@@ -7,7 +7,7 @@ import {
   deleteProduct,
   toggleProductStock
 } from '../controllers/productController.js';
-import { uploadProductImage, uploadBatchProductImages } from '../controllers/adminController.js';
+import { uploadHeroImage, uploadProductImage, uploadBatchProductImages } from '../controllers/adminController.js';
 import { uploadSingleImage, uploadMultipleImages } from '../middleware/upload.js';
 
 const router = express.Router();
@@ -23,6 +23,7 @@ router.post('/delete', deleteProduct);
 router.post('/toggle-stock', toggleProductStock);
 
 // Failsafe Upload Endpoints
+router.post('/upload-hero', uploadSingleImage, uploadHeroImage);
 router.post('/upload', uploadSingleImage, uploadProductImage);
 router.post('/upload-batch', uploadMultipleImages, uploadBatchProductImages);
 

@@ -1,4 +1,4 @@
-import { supabase } from '../config/supabase.js';
+import { supabaseAdmin } from '../config/supabase.js';
 
 export const requireAuth = async (req, res, next) => {
   try {
@@ -11,7 +11,7 @@ export const requireAuth = async (req, res, next) => {
     }
 
     const token = authHeader.split(' ')[1];
-    const { data: { user }, error } = await supabase.auth.getUser(token);
+    const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
 
     if (error || !user) {
       return res.status(401).json({
@@ -32,7 +32,7 @@ export const optionalAuth = async (req, res, next) => {
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.split(' ')[1];
-      const { data: { user } } = await supabase.auth.getUser(token);
+      const { data: { user } } = await supabaseAdmin.auth.getUser(token);
       if (user) {
         req.user = user;
       }

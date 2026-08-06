@@ -3,7 +3,7 @@ import { supabase, supabaseAdmin } from '../config/supabase.js';
 export const getProducts = async (req, res, next) => {
   try {
     const { category, isHero, isFeatured } = req.body || {};
-    let query = supabase
+    let query = supabaseAdmin
       .from('products')
       .select(`
         *,
@@ -96,7 +96,9 @@ export const createProduct = async (req, res, next) => {
       heroQuote,
       heroNote1,
       heroNote2,
-      heroNote3
+      heroNote3,
+      heroImageUrl,
+      hero_image_url
     } = req.body;
 
     if (!name || !price) {
@@ -127,6 +129,8 @@ export const createProduct = async (req, res, next) => {
       is_featured: false
     };
 
+    const targetHeroUrl = heroImageUrl || hero_image_url;
+
     const { data: newProduct, error: prodErr } = await supabaseAdmin
       .from('products')
       .upsert(productPayload)
@@ -137,19 +141,52 @@ export const createProduct = async (req, res, next) => {
       return res.status(500).json({ success: false, error: prodErr.message });
     }
 
-    // Insert scent details
-    await supabaseAdmin
-      .from('product_scent_details')
-      .upsert({
-        product_id: productId,
-        top_notes: topNotes || 'Galbanum, Bergamot',
-        heart_notes: heartNotes || 'Iris Pallida, May Rose',
-        base_notes: baseNotes || 'Vetiver, Cedarwood',
-        scent_profile: 'Chypre Floral • Powdery Suede Iris',
-        scent_family: 'Haute Parfumerie'
-      });
+    // Task side: Handle hero image storing in product_images table if targetHeroUrl provided
+    if (targetHeroUrl) {
+      await supabaseAdmin
+        .from('product_images')
+        .delete()
+        .eq('product_id', productId)
+        .eq('alt_text', 'hero_image');
 
-    // Associate temporary uploaded images with the new product ID and delete unused ones
+      await supabaseAdmin
+        .from('product_images')
+        .insert({
+          product_id: productId,
+          image_url: targetHeroUrl,
+          alt_text: 'hero_image',
+          format: 'webp',
+          is_primary: false
+        });
+
+      try {
+        await supabaseAdmin
+          .from('products')
+          .update({ hero_image_url: targetHeroUrl })
+          .eq('id', productId);
+      } catch (e) {
+        // Non-fatal notice if column doesn't exist yet
+      }
+    }
+
+    // Run scent details insertion and image association concurrently
+    const sideTasks = [];
+
+    // Task 1: Insert scent details
+    sideTasks.push(
+      supabaseAdmin
+        .from('product_scent_details')
+        .upsert({
+          product_id: productId,
+          top_notes: topNotes || 'Galbanum, Bergamot',
+          heart_notes: heartNotes || 'Iris Pallida, May Rose',
+          base_notes: baseNotes || 'Vetiver, Cedarwood',
+          scent_profile: 'Chypre Floral • Powdery Suede Iris',
+          scent_family: 'Haute Parfumerie'
+        })
+    );
+
+    // Task 2: Associate temporary uploaded images
     const validUrls = [];
     const mainImg = imageUrl || newProduct.image_url;
     const gallImgs = galleryImages || newProduct.gallery_images;
@@ -159,17 +196,23 @@ export const createProduct = async (req, res, next) => {
     }
 
     if (validUrls.length > 0) {
-      await supabaseAdmin
-        .from('product_images')
-        .update({ product_id: productId })
-        .eq('product_id', 'temp-product')
-        .in('image_url', validUrls);
+      sideTasks.push(
+        supabaseAdmin
+          .from('product_images')
+          .update({ product_id: productId })
+          .eq('product_id', 'temp-product')
+          .in('image_url', validUrls)
+      );
     }
 
-    await supabaseAdmin
-      .from('product_images')
-      .delete()
-      .eq('product_id', 'temp-product');
+    sideTasks.push(
+      supabaseAdmin
+        .from('product_images')
+        .delete()
+        .eq('product_id', 'temp-product')
+    );
+
+    await Promise.all(sideTasks);
 
     res.status(201).json({
       success: true,
@@ -206,6 +249,8 @@ export const updateProduct = async (req, res, next) => {
     if (updates.heroNote2 !== undefined) dbPayload.hero_note_2 = updates.heroNote2;
     if (updates.heroNote3 !== undefined) dbPayload.hero_note_3 = updates.heroNote3;
 
+    const targetHeroUrl = updates.heroImageUrl !== undefined ? updates.heroImageUrl : updates.hero_image_url;
+
     const { data: updated, error } = await supabaseAdmin
       .from('products')
       .update(dbPayload)
@@ -217,46 +262,85 @@ export const updateProduct = async (req, res, next) => {
       return res.status(500).json({ success: false, error: error.message });
     }
 
+    const sideTasks = [];
+
+    if (targetHeroUrl !== undefined) {
+      sideTasks.push((async () => {
+        if (targetHeroUrl) {
+          await supabaseAdmin
+            .from('product_images')
+            .delete()
+            .eq('product_id', id)
+            .eq('alt_text', 'hero_image');
+
+          await supabaseAdmin
+            .from('product_images')
+            .insert({
+              product_id: id,
+              image_url: targetHeroUrl,
+              alt_text: 'hero_image',
+              format: 'webp',
+              is_primary: false
+            });
+
+          try {
+            await supabaseAdmin
+              .from('products')
+              .update({ hero_image_url: targetHeroUrl })
+              .eq('id', id);
+          } catch (e) {
+            // Non-fatal notice if column doesn't exist
+          }
+        }
+      })());
+    }
+
     if (updates.topNotes || updates.heartNotes || updates.baseNotes) {
-      await supabaseAdmin
-        .from('product_scent_details')
-        .update({
-          ...(updates.topNotes && { top_notes: updates.topNotes }),
-          ...(updates.heartNotes && { heart_notes: updates.heartNotes }),
-          ...(updates.baseNotes && { base_notes: updates.baseNotes })
-        })
-        .eq('product_id', id);
+      sideTasks.push(
+        supabaseAdmin
+          .from('product_scent_details')
+          .update({
+            ...(updates.topNotes && { top_notes: updates.topNotes }),
+            ...(updates.heartNotes && { heart_notes: updates.heartNotes }),
+            ...(updates.baseNotes && { base_notes: updates.baseNotes })
+          })
+          .eq('product_id', id)
+      );
     }
 
     // Clean up product_images table to match the new image list
     if (updates.imageUrl !== undefined || updates.galleryImages !== undefined) {
-      const validUrls = new Set();
-      const currentMain = updates.imageUrl !== undefined ? updates.imageUrl : updated.image_url;
-      const currentGallery = Array.isArray(updates.galleryImages) 
-        ? updates.galleryImages 
-        : (updated.gallery_images || []);
+      sideTasks.push((async () => {
+        const validUrls = new Set();
+        const currentMain = updates.imageUrl !== undefined ? updates.imageUrl : updated.image_url;
+        const currentGallery = Array.isArray(updates.galleryImages) 
+          ? updates.galleryImages 
+          : (updated.gallery_images || []);
 
-      if (currentMain) validUrls.add(currentMain);
-      currentGallery.forEach(url => validUrls.add(url));
+        if (currentMain) validUrls.add(currentMain);
+        currentGallery.forEach(url => validUrls.add(url));
 
-      const { data: dbImages } = await supabaseAdmin
-        .from('product_images')
-        .select('id, image_url')
-        .eq('product_id', id);
+        const { data: dbImages } = await supabaseAdmin
+          .from('product_images')
+          .select('id, image_url')
+          .eq('product_id', id);
 
-      if (dbImages && dbImages.length > 0) {
-        const toDelete = dbImages
-          .filter(img => !validUrls.has(img.image_url))
-          .map(img => img.id);
+        if (dbImages && dbImages.length > 0) {
+          const toDelete = dbImages
+            .filter(img => !validUrls.has(img.image_url))
+            .map(img => img.id);
 
-        if (toDelete.length > 0) {
-          await supabaseAdmin
-            .from('product_images')
-            .delete()
-            .in('id', toDelete);
+          if (toDelete.length > 0) {
+            await supabaseAdmin
+              .from('product_images')
+              .delete()
+              .in('id', toDelete);
+          }
         }
-      }
+      })());
     }
+
+    await Promise.all(sideTasks);
 
     res.status(200).json({
       success: true,

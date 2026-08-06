@@ -1,5 +1,53 @@
-import { processAndStoreWebpImage } from '../services/imageService.js';
+import { processAndStoreWebpImage, processAndStoreHeroWebpImage } from '../services/imageService.js';
 import { supabaseAdmin, supabase } from '../config/supabase.js';
+
+export const uploadHeroImage = async (req, res, next) => {
+  try {
+    const { productId } = req.body || {};
+
+    if (!req.file && !req.body.imageBase64) {
+      return res.status(400).json({ success: false, error: 'Image file upload or Base64 string is required for hero section image' });
+    }
+
+    let fileBuffer;
+    let originalName = 'hero-showcase-image';
+
+    if (req.file) {
+      fileBuffer = req.file.buffer;
+      originalName = req.file.originalname;
+    } else if (req.body.imageBase64) {
+      const base64Data = req.body.imageBase64.replace(/^data:image\/\w+;base64,/, '');
+      fileBuffer = Buffer.from(base64Data, 'base64');
+    }
+
+    const processedHeroImage = await processAndStoreHeroWebpImage({
+      fileBuffer,
+      originalName,
+      productId: productId || 'temp-product'
+    });
+
+    if (productId && productId !== 'temp-product') {
+      // Safely attempt updating hero_image_url if column exists or handle non-fatal warning
+      try {
+        await supabaseAdmin
+          .from('products')
+          .update({ hero_image_url: processedHeroImage.public_url })
+          .eq('id', productId);
+      } catch (err) {
+        console.warn('Notice updating hero_image_url column:', err.message);
+      }
+    }
+
+    res.status(201).json({
+      success: true,
+      message: 'Hero section image converted to .webp Base64 and stored successfully',
+      image: processedHeroImage
+    });
+  } catch (error) {
+    console.error('Error in uploadHeroImage:', error);
+    res.status(500).json({ success: false, error: error.message || 'Hero image upload and conversion failed' });
+  }
+};
 
 export const uploadProductImage = async (req, res, next) => {
   try {
@@ -61,6 +109,7 @@ export const uploadProductImage = async (req, res, next) => {
     res.status(500).json({ success: false, error: error.message || 'Image upload and conversion failed' });
   }
 };
+
 
 export const uploadBatchProductImages = async (req, res, next) => {
   try {
@@ -208,32 +257,34 @@ export const toggleProductFlags = async (req, res, next) => {
 
 export const getDashboardStats = async (req, res, next) => {
   try {
-    const { count: totalProducts } = await supabase.from('products').select('*', { count: 'exact', head: true });
-    const { count: activeProducts } = await supabase.from('products').select('*', { count: 'exact', head: true }).eq('in_stock', true);
-    const { count: heroProducts } = await supabase.from('products').select('*', { count: 'exact', head: true }).eq('is_hero', true);
-    const { count: featuredProducts } = await supabase.from('products').select('*', { count: 'exact', head: true }).eq('is_featured', true);
-    const { count: totalOrders } = await supabase.from('orders').select('*', { count: 'exact', head: true });
-    const { count: totalUsers } = await supabase.from('profiles').select('*', { count: 'exact', head: true });
-    const { count: totalDiscounts } = await supabase.from('discounts').select('*', { count: 'exact', head: true });
-    const { count: totalCategories } = await supabase.from('categories').select('*', { count: 'exact', head: true });
+    const [
+      { count: totalProducts },
+      { count: activeProducts },
+      { count: heroProducts },
+      { count: featuredProducts },
+      { count: totalOrders },
+      { count: totalUsers },
+      { count: totalDiscounts },
+      { count: totalCategories },
+      { data: orderData },
+      { data: recentOrders },
+      { data: recentProducts }
+    ] = await Promise.all([
+      supabaseAdmin.from('products').select('*', { count: 'exact', head: true }),
+      supabaseAdmin.from('products').select('*', { count: 'exact', head: true }).eq('in_stock', true),
+      supabaseAdmin.from('products').select('*', { count: 'exact', head: true }).eq('is_hero', true),
+      supabaseAdmin.from('products').select('*', { count: 'exact', head: true }).eq('is_featured', true),
+      supabaseAdmin.from('orders').select('*', { count: 'exact', head: true }),
+      supabaseAdmin.from('profiles').select('*', { count: 'exact', head: true }),
+      supabaseAdmin.from('discounts').select('*', { count: 'exact', head: true }),
+      supabaseAdmin.from('categories').select('*', { count: 'exact', head: true }),
+      supabaseAdmin.from('orders').select('total_amount'),
+      supabaseAdmin.from('orders').select('*').order('created_at', { ascending: false }).limit(5),
+      supabaseAdmin.from('products').select('id, name, french_name, category, price, image_url, created_at').order('created_at', { ascending: false }).limit(5)
+    ]);
 
     // Calculate total revenue from live orders
-    const { data: orderData } = await supabase.from('orders').select('total_amount');
     const totalRevenue = (orderData || []).reduce((sum, o) => sum + (Number(o.total_amount) || 0), 0);
-
-    // Fetch latest 5 orders for real live activity
-    const { data: recentOrders } = await supabase
-      .from('orders')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(5);
-
-    // Fetch latest 5 products for live catalog activity
-    const { data: recentProducts } = await supabase
-      .from('products')
-      .select('id, name, french_name, category, price, image_url, created_at')
-      .order('created_at', { ascending: false })
-      .limit(5);
 
     res.status(200).json({
       success: true,
@@ -310,7 +361,7 @@ export const updateUserRole = async (req, res, next) => {
 // ─────────────────────────────────────────────────────────────────────────────
 export const getCategories = async (req, res, next) => {
   try {
-    const { data: categories, error } = await supabase
+    const { data: categories, error } = await supabaseAdmin
       .from('categories')
       .select('*')
       .order('created_at', { ascending: false });
