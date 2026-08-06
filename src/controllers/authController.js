@@ -99,15 +99,97 @@ export const getMe = async (req, res, next) => {
       return res.status(500).json({ success: false, error: error.message });
     }
 
+    const metadata = req.user.user_metadata || {};
+
+    const mergedProfile = {
+      id: req.user.id,
+      email: req.user.email,
+      role: profile?.role || 'customer',
+      full_name: profile?.full_name || metadata.full_name || metadata.name || '',
+      phone: profile?.phone || metadata.phone || '',
+      street_address: profile?.street_address || metadata.street_address || '',
+      city: profile?.city || metadata.city || '',
+      state: profile?.state || metadata.state || '',
+      postal_code: profile?.postal_code || metadata.postal_code || '',
+      country: profile?.country || metadata.country || '',
+      created_at: profile?.created_at || req.user.created_at,
+      updated_at: profile?.updated_at || req.user.updated_at
+    };
+
     const userData = {
       ...req.user,
-      role: profile?.role || 'customer'
+      role: mergedProfile.role,
+      profile: mergedProfile
     };
 
     res.status(200).json({
       success: true,
       user: userData,
-      profile: profile || null
+      profile: mergedProfile
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const updateProfile = async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+    const { fullName, phone, streetAddress, city, state, postalCode, country } = req.body;
+
+    // 1. Update user_metadata in Supabase Auth via admin client
+    const { data: authUserData, error: authError } = await supabaseAdmin.auth.admin.updateUserById(userId, {
+      user_metadata: {
+        full_name: fullName,
+        phone: phone || null,
+        street_address: streetAddress || null,
+        city: city || null,
+        state: state || null,
+        postal_code: postalCode || null,
+        country: country || null
+      }
+    });
+
+    if (authError) {
+      return res.status(400).json({ success: false, error: authError.message });
+    }
+
+    // 2. Update profiles table
+    const profilePayload = {
+      id: userId,
+      email: req.user.email,
+      full_name: fullName,
+      phone: phone || null,
+      updated_at: new Date().toISOString()
+    };
+
+    await supabaseAdmin.from('profiles').upsert(profilePayload, { onConflict: 'id' });
+
+    const { data: profile } = await supabaseAdmin.from('profiles').select('*').eq('id', userId).single();
+
+    const mergedProfile = {
+      id: userId,
+      email: req.user.email,
+      role: profile?.role || 'customer',
+      full_name: fullName || profile?.full_name || authUserData?.user?.user_metadata?.full_name || '',
+      phone: phone || profile?.phone || authUserData?.user?.user_metadata?.phone || '',
+      street_address: streetAddress || authUserData?.user?.user_metadata?.street_address || '',
+      city: city || authUserData?.user?.user_metadata?.city || '',
+      state: state || authUserData?.user?.user_metadata?.state || '',
+      postal_code: postalCode || authUserData?.user?.user_metadata?.postal_code || '',
+      country: country || authUserData?.user?.user_metadata?.country || '',
+      updated_at: new Date().toISOString()
+    };
+
+    res.status(200).json({
+      success: true,
+      message: 'Profile updated successfully',
+      profile: mergedProfile,
+      user: {
+        ...authUserData?.user,
+        role: mergedProfile.role,
+        profile: mergedProfile
+      }
     });
   } catch (error) {
     next(error);
@@ -133,10 +215,24 @@ export const refreshSession = async (req, res, next) => {
       .eq('id', data.user.id)
       .single();
 
+    const metadata = data.user.user_metadata || {};
+    const mergedProfile = {
+      id: data.user.id,
+      email: data.user.email,
+      role: profile?.role || 'customer',
+      full_name: profile?.full_name || metadata.full_name || metadata.name || '',
+      phone: profile?.phone || metadata.phone || '',
+      street_address: profile?.street_address || metadata.street_address || '',
+      city: profile?.city || metadata.city || '',
+      state: profile?.state || metadata.state || '',
+      postal_code: profile?.postal_code || metadata.postal_code || '',
+      country: profile?.country || metadata.country || ''
+    };
+
     const userData = {
       ...data.user,
-      role: profile?.role || 'customer',
-      profile: profile || null
+      role: mergedProfile.role,
+      profile: mergedProfile
     };
 
     res.status(200).json({
@@ -149,3 +245,4 @@ export const refreshSession = async (req, res, next) => {
     next(error);
   }
 };
+

@@ -1,4 +1,5 @@
-import { supabase } from '../config/supabase.js';
+import { supabaseAdmin as supabase, supabaseAdmin } from '../config/supabase.js';
+
 import { z } from 'zod';
 
 export const createOrderSchema = z.object({
@@ -11,19 +12,23 @@ export const createOrderSchema = z.object({
       engravingText: z.string().optional()
     })).min(1, 'Order must contain at least one item'),
     shippingAddress: z.object({
-      street: z.string().min(1),
-      city: z.string().min(1),
-      postalCode: z.string().min(1),
-      country: z.string().min(1)
+      fullName: z.string().optional(),
+      phone: z.string().optional(),
+      street: z.string().min(1, 'Street address is required'),
+      city: z.string().min(1, 'City is required'),
+      state: z.string().optional(),
+      postalCode: z.string().min(1, 'Postal code is required'),
+      country: z.string().min(1, 'Country is required')
     }),
-    discountCode: z.string().optional()
+    discountCode: z.string().optional(),
+    saveToProfile: z.boolean().optional()
   })
 });
 
 export const createOrder = async (req, res, next) => {
   try {
     const userId = req.user.id;
-    const { items, shippingAddress, discountCode } = req.body;
+    const { items, shippingAddress, discountCode, saveToProfile = true } = req.body;
 
     let subtotal = items.reduce((acc, item) => acc + (item.unitPrice * item.quantity), 0);
     let discountAmount = 0;
@@ -47,7 +52,7 @@ export const createOrder = async (req, res, next) => {
       .from('orders')
       .insert({
         user_id: userId,
-        status: 'pending',
+        status: 'ordered',
         subtotal,
         discount_amount: discountAmount,
         total,
@@ -71,6 +76,39 @@ export const createOrder = async (req, res, next) => {
 
     await supabase.from('order_items').insert(orderItemsPayload);
 
+    // Save shipping address & phone details to User Profile in Database if requested / default
+    if (saveToProfile) {
+      try {
+        const { fullName, phone, street, city, state, postalCode, country } = shippingAddress;
+
+        // Update user_metadata in Supabase Auth
+        await supabaseAdmin.auth.admin.updateUserById(userId, {
+          user_metadata: {
+            ...(fullName ? { full_name: fullName } : {}),
+            ...(phone ? { phone } : {}),
+            street_address: street,
+            city,
+            state: state || '',
+            postal_code: postalCode,
+            country
+          }
+        });
+
+        // Update profiles table
+        const profilePayload = {
+          id: userId,
+          email: req.user.email,
+          ...(fullName ? { full_name: fullName } : {}),
+          ...(phone ? { phone } : {}),
+          updated_at: new Date().toISOString()
+        };
+
+        await supabaseAdmin.from('profiles').upsert(profilePayload, { onConflict: 'id' });
+      } catch (profileErr) {
+        console.error('Non-blocking error syncing shipping info to profile:', profileErr);
+      }
+    }
+
     // Clear user cart
     await supabase.from('cart_items').delete().eq('user_id', userId);
 
@@ -83,6 +121,7 @@ export const createOrder = async (req, res, next) => {
     next(error);
   }
 };
+
 
 export const getUserOrders = async (req, res, next) => {
   try {

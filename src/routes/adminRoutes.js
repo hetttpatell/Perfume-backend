@@ -9,6 +9,8 @@ import {
   getDashboardStats,
   getUsersList,
   updateUserRole,
+  getAllOrdersAdmin,
+  updateOrderStatusAdmin,
   toggleProductStock,
   getCategories,
   createCategory,
@@ -40,10 +42,12 @@ router.post('/images/delete', deleteProductImage);
 router.post('/product/toggle-flags', toggleProductFlags);
 router.post('/product/toggle-stock', toggleProductStock);
 
-// POST endpoints for Dashboard Stats and User Management
+// POST endpoints for Dashboard Stats, User & Order Management
 router.post('/stats', getDashboardStats);
 router.post('/users/list', getUsersList);
 router.post('/users/update-role', updateUserRole);
+router.post('/orders/list', getAllOrdersAdmin);
+router.post('/orders/update-status', updateOrderStatusAdmin);
 
 // Category CRUD endpoints
 router.post('/categories/list', getCategories);

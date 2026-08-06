@@ -1,4 +1,5 @@
-import { supabase } from '../config/supabase.js';
+import { supabaseAdmin as supabase } from '../config/supabase.js';
+
 
 export const getWishlist = async (req, res, next) => {
   try {

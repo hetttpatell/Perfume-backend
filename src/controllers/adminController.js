@@ -357,6 +357,63 @@ export const updateUserRole = async (req, res, next) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ORDER MANAGEMENT CONTROLLERS
+// ─────────────────────────────────────────────────────────────────────────────
+export const getAllOrdersAdmin = async (req, res, next) => {
+  try {
+    const { data: orders, error } = await supabaseAdmin
+      .from('orders')
+      .select(`
+        *,
+        items:order_items(
+          *,
+          product:products(name, french_name, image_url)
+        )
+      `)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      return res.status(500).json({ success: false, error: error.message });
+    }
+
+    res.status(200).json({
+      success: true,
+      orders: orders || []
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const updateOrderStatusAdmin = async (req, res, next) => {
+  try {
+    const { orderId, status } = req.body;
+    if (!orderId || !status) {
+      return res.status(400).json({ success: false, error: 'Order ID and status are required' });
+    }
+
+    const { data: updated, error } = await supabaseAdmin
+      .from('orders')
+      .update({ status })
+      .eq('id', orderId)
+      .select()
+      .single();
+
+    if (error) {
+      return res.status(500).json({ success: false, error: error.message });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `Order status updated to ${status}`,
+      order: updated
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // CATEGORY CRUD CONTROLLERS
 // ─────────────────────────────────────────────────────────────────────────────
 export const getCategories = async (req, res, next) => {
