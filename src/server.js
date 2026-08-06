@@ -46,7 +46,7 @@ if (process.env.NODE_ENV !== 'test') {
 }
 
 // Global Rate Limiter
-app.use('/api', globalLimiter);
+app.use(globalLimiter);
 
 // Health Check Endpoint (Both POST and GET supported)
 const healthHandler = (req, res) => {
@@ -59,7 +59,7 @@ const healthHandler = (req, res) => {
 app.post('/health', healthHandler);
 app.get('/health', healthHandler);
 
-// Secured API V1 Routes (Enforcing POST method for all data operations)
+// Secured API V1 Routes
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/products', productRoutes);
 app.use('/api/v1/reviews', reviewRoutes);
@@ -69,6 +69,17 @@ app.use('/api/v1/locations', locationRoutes);
 app.use('/api/v1/discounts', discountRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/wishlist', wishlistRoutes);
+
+// Fallback Route Aliases (Handles clients sending requests without /api/v1 prefix)
+app.use('/auth', authRoutes);
+app.use('/products', productRoutes);
+app.use('/reviews', reviewRoutes);
+app.use('/cart', cartRoutes);
+app.use('/orders', orderRoutes);
+app.use('/locations', locationRoutes);
+app.use('/discounts', discountRoutes);
+app.use('/admin', adminRoutes);
+app.use('/wishlist', wishlistRoutes);
 
 // Error Handling Middlewares
 app.use(notFoundHandler);
