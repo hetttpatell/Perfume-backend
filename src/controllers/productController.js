@@ -322,12 +322,12 @@ export const updateProduct = async (req, res, next) => {
 
         const { data: dbImages } = await supabaseAdmin
           .from('product_images')
-          .select('id, image_url')
+          .select('id, image_url, alt_text')
           .eq('product_id', id);
 
         if (dbImages && dbImages.length > 0) {
           const toDelete = dbImages
-            .filter(img => !validUrls.has(img.image_url))
+            .filter(img => img.alt_text !== 'hero_image' && !validUrls.has(img.image_url))
             .map(img => img.id);
 
           if (toDelete.length > 0) {
