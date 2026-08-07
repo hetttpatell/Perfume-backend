@@ -24,21 +24,25 @@ import {
 import { getAllReviews, deleteReview } from '../controllers/reviewController.js';
 import { getAllContactMessages, updateContactMessageStatus, deleteContactMessage } from '../controllers/contactController.js';
 import { uploadSingleImage, uploadMultipleImages } from '../middleware/upload.js';
+import { requireAdmin } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// POST endpoint for single, batch, and hero section image uploads with automatic .webp conversion
+// Publicly accessible category and discount lists for catalog display
+router.post('/categories/list', getCategories);
+router.post('/discounts/list', getDiscounts);
+router.post('/images/list', getProductImages);
+
+// Protect ALL administrative routes with strict requireAdmin middleware
+router.use(requireAdmin);
+
+// POST endpoint for single, batch, and hero section image uploads
 router.post('/images/upload-hero', uploadSingleImage, uploadHeroImage);
 router.post('/images/upload', uploadSingleImage, uploadProductImage);
 router.post('/images/upload-batch', uploadMultipleImages, uploadBatchProductImages);
-
-// POST endpoint to retrieve images for a product
-router.post('/images/list', getProductImages);
-
-// POST endpoint to delete an image
 router.post('/images/delete', deleteProductImage);
 
-// POST endpoint to toggle Hero Section and Featured Section visibility
+// POST endpoints for Hero/Featured section and product stock toggling
 router.post('/product/toggle-flags', toggleProductFlags);
 router.post('/product/toggle-stock', toggleProductStock);
 
@@ -49,14 +53,12 @@ router.post('/users/update-role', updateUserRole);
 router.post('/orders/list', getAllOrdersAdmin);
 router.post('/orders/update-status', updateOrderStatusAdmin);
 
-// Category CRUD endpoints
-router.post('/categories/list', getCategories);
+// Category mutation endpoints
 router.post('/categories/create', createCategory);
 router.post('/categories/update', updateCategory);
 router.post('/categories/delete', deleteCategory);
 
-// Discount / Coupon CRUD endpoints
-router.post('/discounts/list', getDiscounts);
+// Discount / Coupon mutation endpoints
 router.post('/discounts/create', createDiscount);
 router.post('/discounts/update', updateDiscount);
 router.post('/discounts/delete', deleteDiscount);

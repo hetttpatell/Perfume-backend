@@ -42,3 +42,46 @@ export const optionalAuth = async (req, res, next) => {
     next();
   }
 };
+
+export const requireAdmin = async (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized: Missing access token'
+      });
+    }
+
+    const token = authHeader.split(' ')[1];
+    const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
+
+    if (error || !user) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized: Invalid or expired access token'
+      });
+    }
+
+    // Verify role in profiles table
+    const { data: profile } = await supabaseAdmin
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .single();
+
+    const role = profile?.role || user.user_metadata?.role || 'customer';
+
+    if (role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        error: 'Access Denied: Admin privileges required'
+      });
+    }
+
+    req.user = { ...user, role };
+    next();
+  } catch (error) {
+    next(error);
+  }
+};

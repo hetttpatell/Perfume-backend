@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import cookieParser from 'cookie-parser';
 import dotenv from 'dotenv';
+import compression from 'compression';
 
 import { globalLimiter } from './middleware/rateLimiter.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
@@ -19,11 +20,18 @@ import adminRoutes from './routes/adminRoutes.js';
 import wishlistRoutes from './routes/wishlistRoutes.js';
 import contactRoutes from './routes/contactRoutes.js';
 
+import { getAllProductsFromDb } from './controllers/productController.js';
+import { serverCache } from './services/cacheService.js';
+import { supabaseAdmin } from './config/supabase.js';
+
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
+
+// GZIP Compression Middleware
+app.use(compression());
 
 // Security Headers via Helmet
 app.use(helmet());
@@ -89,8 +97,23 @@ app.use(notFoundHandler);
 app.use(errorHandler);
 
 if (process.env.NODE_ENV !== 'test') {
-  app.listen(PORT, () => {
+  app.listen(PORT, async () => {
     console.log(`🔒 Lune Secured Backend Server v1.1 running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
+
+    // Non-blocking background pre-warm
+    try {
+      console.log('⚡ Pre-warming database caches...');
+      const [products, { data: categories }] = await Promise.all([
+        getAllProductsFromDb(),
+        supabaseAdmin.from('categories').select('*').order('created_at', { ascending: false })
+      ]);
+      if (categories) {
+        serverCache.set('categories_list', { success: true, categories }, 300000);
+      }
+      console.log(`🚀 Database cache warm! Loaded ${products.length} products & ${categories?.length || 0} categories into ultra-fast memory cache.`);
+    } catch (err) {
+      console.warn('Cache pre-warm notice:', err.message);
+    }
   });
 }
 

@@ -1,5 +1,6 @@
 import { processAndStoreWebpImage, processAndStoreHeroWebpImage } from '../services/imageService.js';
 import { supabaseAdmin, supabase } from '../config/supabase.js';
+import { serverCache } from '../services/cacheService.js';
 
 export const uploadHeroImage = async (req, res, next) => {
   try {
@@ -418,6 +419,11 @@ export const updateOrderStatusAdmin = async (req, res, next) => {
 // ─────────────────────────────────────────────────────────────────────────────
 export const getCategories = async (req, res, next) => {
   try {
+    const cachedData = serverCache.get('categories_list');
+    if (cachedData) {
+      return res.status(200).json(cachedData);
+    }
+
     const { data: categories, error } = await supabaseAdmin
       .from('categories')
       .select('*')
@@ -425,7 +431,10 @@ export const getCategories = async (req, res, next) => {
 
     if (error) return res.status(500).json({ success: false, error: error.message });
 
-    res.status(200).json({ success: true, categories: categories || [] });
+    const responsePayload = { success: true, categories: categories || [] };
+    serverCache.set('categories_list', responsePayload, 180000);
+
+    res.status(200).json(responsePayload);
   } catch (error) {
     next(error);
   }
@@ -451,6 +460,8 @@ export const createCategory = async (req, res, next) => {
       .single();
 
     if (error) return res.status(500).json({ success: false, error: error.message });
+
+    serverCache.clearPattern('categories_');
 
     res.status(201).json({ success: true, message: 'Category created successfully', category: newCat });
   } catch (error) {
@@ -478,6 +489,8 @@ export const updateCategory = async (req, res, next) => {
 
     if (error) return res.status(500).json({ success: false, error: error.message });
 
+    serverCache.clearPattern('categories_');
+
     res.status(200).json({ success: true, message: 'Category updated successfully', category: updated });
   } catch (error) {
     next(error);
@@ -491,6 +504,8 @@ export const deleteCategory = async (req, res, next) => {
 
     const { error } = await supabaseAdmin.from('categories').delete().eq('id', id);
     if (error) return res.status(500).json({ success: false, error: error.message });
+
+    serverCache.clearPattern('categories_');
 
     res.status(200).json({ success: true, message: 'Category deleted successfully' });
   } catch (error) {
