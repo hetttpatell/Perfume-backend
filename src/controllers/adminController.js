@@ -279,13 +279,23 @@ export const getDashboardStats = async (req, res, next) => {
       supabaseAdmin.from('profiles').select('*', { count: 'exact', head: true }),
       supabaseAdmin.from('discounts').select('*', { count: 'exact', head: true }),
       supabaseAdmin.from('categories').select('*', { count: 'exact', head: true }),
-      supabaseAdmin.from('orders').select('total_amount'),
-      supabaseAdmin.from('orders').select('*').order('created_at', { ascending: false }).limit(5),
+      supabaseAdmin.from('orders').select('*, items:order_items(*, product:products(*))'),
+      supabaseAdmin.from('orders').select('*, items:order_items(*, product:products(*))').order('created_at', { ascending: false }).limit(5),
       supabaseAdmin.from('products').select('id, name, french_name, category, price, image_url, created_at').order('created_at', { ascending: false }).limit(5)
     ]);
 
-    // Calculate total revenue from live orders
-    const totalRevenue = (orderData || []).reduce((sum, o) => sum + (Number(o.total_amount) || 0), 0);
+    // Calculate total revenue from live orders with robust fallbacks
+    const totalRevenue = (orderData || []).reduce((sum, o) => {
+      let val = Number(o.total || o.total_amount || o.subtotal || 0);
+      if (val === 0 && Array.isArray(o.items) && o.items.length > 0) {
+        val = o.items.reduce((s, it) => {
+          const price = Number(it.unit_price || it.price || it.product?.price || 0);
+          const qty = Number(it.quantity || 1);
+          return s + (price * qty);
+        }, 0);
+      }
+      return sum + val;
+    }, 0);
 
     res.status(200).json({
       success: true,
