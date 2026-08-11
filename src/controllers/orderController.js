@@ -121,7 +121,23 @@ export const createOrder = async (req, res, next) => {
           .select('*, product:products(name, french_name, image_url)')
           .eq('order_id', order.id);
 
-        await sendOrderConfirmationEmail(order, orderItems || [], req.user.email);
+        let customerEmail = req.user?.email || req.user?.user_metadata?.email || shippingAddress?.email;
+
+        if (!customerEmail && userId) {
+          const { data: profile } = await supabaseAdmin.from('profiles').select('email').eq('id', userId).single();
+          customerEmail = profile?.email;
+        }
+
+        if (!customerEmail && userId) {
+          const { data: { user: authUser } } = await supabaseAdmin.auth.admin.getUserById(userId);
+          customerEmail = authUser?.email;
+        }
+
+        if (customerEmail) {
+          await sendOrderConfirmationEmail(order, orderItems || [], customerEmail);
+        } else {
+          console.warn('📧 Order email skipped: Could not resolve customer email for order', order.id);
+        }
       } catch (emailErr) {
         console.error('Non-blocking error sending order confirmation email:', emailErr.message);
       }

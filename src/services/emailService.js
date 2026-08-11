@@ -100,6 +100,7 @@ function buildItemsHtml(items) {
     const unitPrice = Number(item.unit_price || 0);
     const lineTotal = (unitPrice * qty).toFixed(2);
     const imageUrl = item.product?.image_url || '';
+    const engraving = item.engraving_text || item.engravingText || item.engraving;
 
     const imageHtml = imageUrl
       ? `<img src="${imageUrl}" alt="${productName}" width="60" height="60" style="border-radius:6px;object-fit:cover;border:1px solid #E5E5E5;" />`
@@ -118,6 +119,7 @@ function buildItemsHtml(items) {
                   ${productName}
                 </div>
                 ${frenchName ? `<div style="font-family:Helvetica,Arial,sans-serif;font-size:11px;color:#888888;font-style:italic;margin-top:2px;">${frenchName}</div>` : ''}
+                ${engraving ? `<div style="font-family:Helvetica,Arial,sans-serif;font-size:11px;color:#C08A3E;font-style:italic;margin-top:2px;">Engraving: "${engraving}"</div>` : ''}
                 <div style="font-family:Helvetica,Arial,sans-serif;font-size:11px;color:#666666;margin-top:4px;">
                   SIZE: ${size} &nbsp;•&nbsp; QTY: ${qty}
                 </div>
@@ -136,17 +138,18 @@ function buildItemsHtml(items) {
 }
 
 /**
- * Build shipping address block
+ * Build shipping address & customer contact block
  */
-function buildShippingHtml(address) {
-  if (!address) return '';
+function buildShippingHtml(address, userEmail) {
+  if (!address && !userEmail) return '';
 
   const parts = [
-    address.fullName || address.full_name,
-    address.street,
-    [address.city, address.state].filter(Boolean).join(', '),
-    [address.postalCode || address.postal_code, address.country].filter(Boolean).join(' — '),
-    address.phone ? `Tel: ${address.phone}` : null,
+    address?.fullName || address?.full_name || address?.name,
+    address?.street || address?.street_address,
+    [address?.city, address?.state].filter(Boolean).join(', '),
+    [address?.postalCode || address?.postal_code, address?.country].filter(Boolean).join(' — '),
+    address?.phone ? `Tel: ${address.phone}` : null,
+    (userEmail || address?.email) ? `Email: ${userEmail || address?.email}` : null,
   ].filter(Boolean);
 
   return parts
@@ -177,7 +180,7 @@ function formatDate(dateStr) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Master Email Template
 // ─────────────────────────────────────────────────────────────────────────────
-function buildEmailHtml({ order, items, status, statusInfo }) {
+function buildEmailHtml({ order, items, status, statusInfo, userEmail }) {
   const orderId = formatOrderId(order.id);
   const orderDate = formatDate(order.created_at);
   const subtotal = Number(order.subtotal || 0).toFixed(2);
@@ -318,14 +321,14 @@ function buildEmailHtml({ order, items, status, statusInfo }) {
             </td>
           </tr>
 
-          <!-- ═══ SHIPPING ADDRESS ═══ -->
+          <!-- ═══ SHIPPING & CONTACT ADDRESS ═══ -->
           <tr>
             <td style="padding:16px 32px 24px 32px;">
               <div style="font-family:Helvetica,Arial,sans-serif;font-size:11px;letter-spacing:2px;color:#888888;text-transform:uppercase;margin-bottom:10px;">
-                SHIPPING ADDRESS
+                DELIVERY & CONTACT DETAILS
               </div>
               <div style="background:#F9F9FB;border-radius:8px;padding:16px;">
-                ${buildShippingHtml(shippingAddress)}
+                ${buildShippingHtml(shippingAddress, userEmail)}
               </div>
             </td>
           </tr>
@@ -378,7 +381,7 @@ export const sendOrderConfirmationEmail = async (order, items, userEmail) => {
     const status = 'ordered';
     const statusInfo = STATUS_MESSAGES[status];
 
-    const html = buildEmailHtml({ order, items, status, statusInfo });
+    const html = buildEmailHtml({ order, items, status, statusInfo, userEmail });
 
     const { data, error } = await resend.emails.send({
       from: `${SENDER_NAME} <${SENDER_EMAIL}>`,
@@ -389,7 +392,10 @@ export const sendOrderConfirmationEmail = async (order, items, userEmail) => {
     });
 
     if (error) {
-      console.error('📧 Failed to send order confirmation email:', error);
+      console.error(`📧 Failed to send order confirmation email to ${userEmail}:`, error.message || error);
+      if (error.statusCode === 403 || (error.message && error.message.includes('onboarding'))) {
+        console.warn('💡 Tip: On Resend free test mode (onboarding@resend.dev), emails can only be sent to the Resend account owner email. Verify a custom domain in Resend to send to all customer emails.');
+      }
     } else {
       console.log(`📧 Order confirmation email sent to ${userEmail} (Resend ID: ${data?.id})`);
     }
@@ -426,7 +432,7 @@ export const sendOrderStatusUpdateEmail = async (order, items, userEmail, newSta
   }
 
   try {
-    const html = buildEmailHtml({ order, items, status: newStatus, statusInfo });
+    const html = buildEmailHtml({ order, items, status: newStatus, statusInfo, userEmail });
 
     const { data, error } = await resend.emails.send({
       from: `${SENDER_NAME} <${SENDER_EMAIL}>`,
@@ -437,7 +443,10 @@ export const sendOrderStatusUpdateEmail = async (order, items, userEmail, newSta
     });
 
     if (error) {
-      console.error(`📧 Failed to send status update email (${newStatus}):`, error);
+      console.error(`📧 Failed to send status update email (${newStatus}) to ${userEmail}:`, error.message || error);
+      if (error.statusCode === 403 || (error.message && error.message.includes('onboarding'))) {
+        console.warn('💡 Tip: On Resend free test mode (onboarding@resend.dev), emails can only be sent to the Resend account owner email. Verify a custom domain in Resend to send to all customer emails.');
+      }
     } else {
       console.log(`📧 Status update email (${newStatus}) sent to ${userEmail} (Resend ID: ${data?.id})`);
     }
