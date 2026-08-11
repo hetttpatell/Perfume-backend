@@ -1,4 +1,5 @@
 import { supabaseAdmin as supabase, supabaseAdmin } from '../config/supabase.js';
+import { sendOrderConfirmationEmail } from '../services/emailService.js';
 
 import { z } from 'zod';
 
@@ -111,6 +112,20 @@ export const createOrder = async (req, res, next) => {
 
     // Clear user cart
     await supabase.from('cart_items').delete().eq('user_id', userId);
+
+    // Fire-and-forget: Send order confirmation email with invoice
+    (async () => {
+      try {
+        const { data: orderItems } = await supabase
+          .from('order_items')
+          .select('*, product:products(name, french_name, image_url)')
+          .eq('order_id', order.id);
+
+        await sendOrderConfirmationEmail(order, orderItems || [], req.user.email);
+      } catch (emailErr) {
+        console.error('Non-blocking error sending order confirmation email:', emailErr.message);
+      }
+    })();
 
     res.status(201).json({
       success: true,

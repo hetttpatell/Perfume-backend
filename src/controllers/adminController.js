@@ -1,6 +1,7 @@
 import { processAndStoreWebpImage, processAndStoreHeroWebpImage } from '../services/imageService.js';
 import { supabaseAdmin, supabase } from '../config/supabase.js';
 import { serverCache } from '../services/cacheService.js';
+import { sendOrderStatusUpdateEmail } from '../services/emailService.js';
 
 export const uploadHeroImage = async (req, res, next) => {
   try {
@@ -413,6 +414,32 @@ export const updateOrderStatusAdmin = async (req, res, next) => {
     if (error) {
       return res.status(500).json({ success: false, error: error.message });
     }
+
+    // Fire-and-forget: Send status update email to customer
+    (async () => {
+      try {
+        // Fetch order items with product details
+        const { data: orderItems } = await supabaseAdmin
+          .from('order_items')
+          .select('*, product:products(name, french_name, image_url)')
+          .eq('order_id', orderId);
+
+        // Look up customer email from user_id via Supabase Auth
+        let customerEmail = null;
+        if (updated.user_id) {
+          const { data: { user } } = await supabaseAdmin.auth.admin.getUserById(updated.user_id);
+          customerEmail = user?.email || null;
+        }
+
+        if (customerEmail) {
+          await sendOrderStatusUpdateEmail(updated, orderItems || [], customerEmail, status);
+        } else {
+          console.warn('📧 Status email skipped: Could not resolve customer email for order', orderId);
+        }
+      } catch (emailErr) {
+        console.error('Non-blocking error sending order status update email:', emailErr.message);
+      }
+    })();
 
     res.status(200).json({
       success: true,
