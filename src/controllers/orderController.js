@@ -1,6 +1,7 @@
 import { supabaseAdmin as supabase, supabaseAdmin } from '../config/supabase.js';
 import { sendOrderConfirmationEmail } from '../services/emailService.js';
-
+import { serverCache } from '../services/cacheService.js';
+import { getAllProductsFromDb } from './productController.js';
 import { z } from 'zod';
 
 export const createOrderSchema = z.object({
@@ -77,6 +78,9 @@ export const createOrder = async (req, res, next) => {
 
     await supabase.from('order_items').insert(orderItemsPayload);
 
+    // Invalidate user orders cache
+    serverCache.clearPattern('user_orders_');
+
     // Save shipping address & phone details to User Profile in Database if requested / default
     if (saveToProfile) {
       try {
@@ -105,6 +109,7 @@ export const createOrder = async (req, res, next) => {
         };
 
         await supabaseAdmin.from('profiles').upsert(profilePayload, { onConflict: 'id' });
+        serverCache.clearPattern(`user_profile_${userId}`);
       } catch (profileErr) {
         console.error('Non-blocking error syncing shipping info to profile:', profileErr);
       }
@@ -157,15 +162,20 @@ export const createOrder = async (req, res, next) => {
 export const getUserOrders = async (req, res, next) => {
   try {
     const userId = req.user.id;
-    const { data: orders, error } = await supabase
+    const cacheKey = `user_orders_${userId}`;
+    const cached = serverCache.get(cacheKey);
+
+    if (cached) {
+      return res.status(200).json({
+        success: true,
+        orders: cached
+      });
+    }
+
+    // Flat fast indexed query on orders table
+    const { data: orders, error } = await supabaseAdmin
       .from('orders')
-      .select(`
-        *,
-        items:order_items(
-          *,
-          product:products(name, french_name, image_url)
-        )
-      `)
+      .select('*')
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
 
@@ -173,11 +183,61 @@ export const getUserOrders = async (req, res, next) => {
       return res.status(500).json({ success: false, error: error.message });
     }
 
+    if (!orders || orders.length === 0) {
+      serverCache.set(cacheKey, [], 30000);
+      return res.status(200).json({
+        success: true,
+        orders: []
+      });
+    }
+
+    const orderIds = orders.map(o => o.id);
+
+    // Parallel flat fetch of order_items and products
+    const [itemsRes, products] = await Promise.all([
+      supabaseAdmin.from('order_items').select('*').in('order_id', orderIds),
+      getAllProductsFromDb().catch(() => [])
+    ]);
+
+    const orderItems = itemsRes.data || [];
+    const prodMap = new Map();
+    (products || []).forEach(p => {
+      prodMap.set(p.id, {
+        name: p.name,
+        french_name: p.french_name || p.frenchName || p.name,
+        image_url: p.image_url || p.imageUrl || p.image || ''
+      });
+    });
+
+    const itemsByOrder = new Map();
+    orderItems.forEach(item => {
+      const prod = prodMap.get(item.product_id) || {
+        name: 'Creation',
+        french_name: '',
+        image_url: ''
+      };
+      const list = itemsByOrder.get(item.order_id) || [];
+      list.push({
+        ...item,
+        product: prod
+      });
+      itemsByOrder.set(item.order_id, list);
+    });
+
+    const fullOrders = orders.map(o => ({
+      ...o,
+      items: itemsByOrder.get(o.id) || []
+    }));
+
+    // Cache user orders for 45 seconds for sub-millisecond response on subsequent tab switches
+    serverCache.set(cacheKey, fullOrders, 45000);
+
     res.status(200).json({
       success: true,
-      orders
+      orders: fullOrders
     });
   } catch (error) {
     next(error);
   }
 };
+

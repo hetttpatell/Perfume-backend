@@ -1,4 +1,5 @@
 import { supabase, supabaseAdmin } from '../config/supabase.js';
+import { serverCache } from '../services/cacheService.js';
 import { z } from 'zod';
 
 export const registerSchema = z.object({
@@ -89,10 +90,22 @@ export const login = async (req, res, next) => {
 
 export const getMe = async (req, res, next) => {
   try {
+    const userId = req.user.id;
+    const cacheKey = `user_profile_${userId}`;
+    const cached = serverCache.get(cacheKey);
+
+    if (cached) {
+      return res.status(200).json({
+        success: true,
+        user: cached.user,
+        profile: cached.profile
+      });
+    }
+
     const { data: profile, error } = await supabase
       .from('profiles')
       .select('*')
-      .eq('id', req.user.id)
+      .eq('id', userId)
       .single();
 
     if (error && error.code !== 'PGRST116') {
@@ -121,6 +134,8 @@ export const getMe = async (req, res, next) => {
       role: mergedProfile.role,
       profile: mergedProfile
     };
+
+    serverCache.set(cacheKey, { user: userData, profile: mergedProfile }, 60000);
 
     res.status(200).json({
       success: true,
@@ -180,6 +195,9 @@ export const updateProfile = async (req, res, next) => {
       country: country || authUserData?.user?.user_metadata?.country || '',
       updated_at: new Date().toISOString()
     };
+
+    serverCache.clearPattern(`user_profile_${userId}`);
+    serverCache.clearPattern(`auth_user_`);
 
     res.status(200).json({
       success: true,

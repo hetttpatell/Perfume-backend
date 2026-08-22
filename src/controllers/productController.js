@@ -247,7 +247,7 @@ export const createProduct = async (req, res, next) => {
 
     await Promise.all(sideTasks);
 
-    serverCache.clearPattern('products_');
+    serverCache.clearAll();
 
     res.status(201).json({
       success: true,
@@ -377,7 +377,7 @@ export const updateProduct = async (req, res, next) => {
 
     await Promise.all(sideTasks);
 
-    serverCache.clearPattern('products_');
+    serverCache.clearAll();
 
     res.status(200).json({
       success: true,
@@ -419,7 +419,7 @@ export const deleteProduct = async (req, res, next) => {
       return res.status(500).json({ success: false, error: error.message });
     }
 
-    serverCache.clearPattern('products_');
+    serverCache.clearAll();
 
     res.status(200).json({
       success: true,
@@ -448,7 +448,7 @@ export const toggleProductStock = async (req, res, next) => {
       return res.status(500).json({ success: false, error: error.message });
     }
 
-    serverCache.clearPattern('products_');
+    serverCache.clearAll();
 
     res.status(200).json({
       success: true,

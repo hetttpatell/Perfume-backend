@@ -2,6 +2,7 @@ import { processAndStoreWebpImage, processAndStoreHeroWebpImage } from '../servi
 import { supabaseAdmin, supabase } from '../config/supabase.js';
 import { serverCache } from '../services/cacheService.js';
 import { sendOrderStatusUpdateEmail } from '../services/emailService.js';
+import { getAllProductsFromDb } from './productController.js';
 
 export const uploadHeroImage = async (req, res, next) => {
   try {
@@ -375,22 +376,59 @@ export const getAllOrdersAdmin = async (req, res, next) => {
   try {
     const { data: orders, error } = await supabaseAdmin
       .from('orders')
-      .select(`
-        *,
-        items:order_items(
-          *,
-          product:products(name, french_name, image_url)
-        )
-      `)
+      .select('*')
       .order('created_at', { ascending: false });
 
     if (error) {
       return res.status(500).json({ success: false, error: error.message });
     }
 
+    if (!orders || orders.length === 0) {
+      return res.status(200).json({
+        success: true,
+        orders: []
+      });
+    }
+
+    const orderIds = orders.map(o => o.id);
+    const [itemsRes, products] = await Promise.all([
+      supabaseAdmin.from('order_items').select('*').in('order_id', orderIds),
+      getAllProductsFromDb().catch(() => [])
+    ]);
+
+    const orderItems = itemsRes.data || [];
+    const prodMap = new Map();
+    (products || []).forEach(p => {
+      prodMap.set(p.id, {
+        name: p.name,
+        french_name: p.french_name || p.frenchName || p.name,
+        image_url: p.image_url || p.imageUrl || p.image || ''
+      });
+    });
+
+    const itemsByOrder = new Map();
+    orderItems.forEach(item => {
+      const prod = prodMap.get(item.product_id) || {
+        name: 'Creation',
+        french_name: '',
+        image_url: ''
+      };
+      const list = itemsByOrder.get(item.order_id) || [];
+      list.push({
+        ...item,
+        product: prod
+      });
+      itemsByOrder.set(item.order_id, list);
+    });
+
+    const fullOrders = orders.map(o => ({
+      ...o,
+      items: itemsByOrder.get(o.id) || []
+    }));
+
     res.status(200).json({
       success: true,
-      orders: orders || []
+      orders: fullOrders
     });
   } catch (error) {
     next(error);
@@ -414,6 +452,9 @@ export const updateOrderStatusAdmin = async (req, res, next) => {
     if (error) {
       return res.status(500).json({ success: false, error: error.message });
     }
+
+    // Invalidate user orders cache so user sees updated stage immediately
+    serverCache.clearPattern('user_orders_');
 
     // Fire-and-forget: Send status update email to customer
     (async () => {
