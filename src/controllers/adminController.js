@@ -456,31 +456,10 @@ export const updateOrderStatusAdmin = async (req, res, next) => {
     // Invalidate user orders cache so user sees updated stage immediately
     serverCache.clearPattern('user_orders_');
 
-    // Fire-and-forget: Send status update email to customer
+    // Fire-and-forget: Send live order stage update email to customer with complete details
     (async () => {
       try {
-        // Fetch order items with product details
-        const { data: orderItems } = await supabaseAdmin
-          .from('order_items')
-          .select('*, product:products(name, french_name, image_url)')
-          .eq('order_id', orderId);
-
-        // Look up customer email from guest_email, shipping_address, or user_id via Profiles & Supabase Auth
-        let customerEmail = updated.guest_email || updated.shipping_address?.email || null;
-        if (!customerEmail && updated.user_id) {
-          const { data: profile } = await supabaseAdmin.from('profiles').select('email').eq('id', updated.user_id).single();
-          customerEmail = profile?.email || null;
-        }
-        if (!customerEmail && updated.user_id) {
-          const { data: { user } } = await supabaseAdmin.auth.admin.getUserById(updated.user_id);
-          customerEmail = user?.email || null;
-        }
-
-        if (customerEmail) {
-          await sendOrderStatusUpdateEmail(updated, orderItems || [], customerEmail, status);
-        } else {
-          console.warn('📧 Status email skipped: Could not resolve customer email for order', orderId);
-        }
+        await sendOrderStatusUpdateEmail(updated, null, null, status);
       } catch (emailErr) {
         console.error('Non-blocking error sending order status update email:', emailErr.message);
       }

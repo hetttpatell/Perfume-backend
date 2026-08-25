@@ -1,10 +1,13 @@
 import { Resend } from 'resend';
+import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
+import { supabaseAdmin } from '../config/supabase.js';
+import { getAllProductsFromDb } from '../controllers/productController.js';
 
 dotenv.config();
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Resend Client Initialization
+// Email Clients Initialization (Dual Engine: Resend + Gmail SMTP)
 // ─────────────────────────────────────────────────────────────────────────────
 const resend = process.env.RESEND_API_KEY && process.env.RESEND_API_KEY !== 're_REPLACE_WITH_YOUR_API_KEY'
   ? new Resend(process.env.RESEND_API_KEY)
@@ -12,121 +15,204 @@ const resend = process.env.RESEND_API_KEY && process.env.RESEND_API_KEY !== 're_
 
 const SENDER_EMAIL = process.env.SENDER_EMAIL || 'onboarding@resend.dev';
 const REPLY_TO_EMAIL = process.env.REPLY_TO_EMAIL || 'lunefragrance1@gmail.com';
-const SENDER_NAME = 'Maison Lune';
+const SENDER_NAME = 'Maison Lune Haute Parfumerie';
+
+// Gmail / Custom SMTP configuration (Allows sending to ANY customer without domain verification)
+const smtpUser = process.env.SMTP_USER || process.env.GMAIL_USER || 'lunefragrance1@gmail.com';
+const smtpPass = process.env.SMTP_PASS || process.env.GMAIL_APP_PASSWORD || null;
+
+const smtpTransporter = smtpPass
+  ? nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: smtpUser,
+        pass: smtpPass.replace(/\s+/g, ''), // clean spaces from Google App Password
+      },
+    })
+  : null;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Order Stage Definitions
+// Order 4-Stage Definitions & Visual Styling
 // ─────────────────────────────────────────────────────────────────────────────
-const ORDER_STAGES = [
-  { key: 'ordered', number: '01', label: 'ORDERED' },
-  { key: 'dispatched', number: '02', label: 'DISPATCHED' },
-  { key: 'out_for_delivery', number: '03', label: 'OUT OF DELIVERY' },
-  { key: 'delivered', number: '04', label: 'DELIVERED' },
+export const ORDER_STAGES = [
+  {
+    key: 'ordered',
+    number: '01',
+    label: 'ORDERED',
+    color: '#D97706', // Amber / Gold
+    bgLight: '#FEF3C7',
+    badgeText: 'STAGE 1/4 · ORDER CONFIRMED',
+    subject: 'Order Confirmed & Atelier Preparation Underway',
+    headline: 'YOUR ORDER HAS BEEN RECEIVED',
+    subheadline: 'Our master perfumers in the Paris atelier are preparing your bespoke creations with meticulous care.',
+    estimatedDeliveryNote: 'Estimated Dispatch: Within 24-48 business hours via Express Courier.',
+  },
+  {
+    key: 'dispatched',
+    number: '02',
+    label: 'DISPATCHED',
+    color: '#2563EB', // Sapphire Blue
+    bgLight: '#DBEAFE',
+    badgeText: 'STAGE 2/4 · ORDER DISPATCHED',
+    subject: 'Order Dispatched & In Transit',
+    headline: 'YOUR CREATION IS ON ITS WAY',
+    subheadline: 'Your order has been sealed in our signature presentation box and handed over to our luxury courier.',
+    estimatedDeliveryNote: 'Estimated Arrival: 2 to 4 business days to your designated address.',
+  },
+  {
+    key: 'out_for_delivery',
+    number: '03',
+    label: 'OUT FOR DELIVERY',
+    color: '#7C3AED', // Royal Violet
+    bgLight: '#EDE9FE',
+    badgeText: 'STAGE 3/4 · OUT FOR DELIVERY',
+    subject: 'Out for Delivery Today',
+    headline: 'YOUR PACKAGE IS ARRIVING TODAY',
+    subheadline: 'Your courier has loaded your parcel and is en route. Please ensure someone is available to receive the package.',
+    estimatedDeliveryNote: 'Delivery Scheduled: Today during standard courier delivery hours.',
+  },
+  {
+    key: 'delivered',
+    number: '04',
+    label: 'DELIVERED',
+    color: '#059669', // Emerald Green
+    bgLight: '#D1FAE5',
+    badgeText: 'STAGE 4/4 · DELIVERED',
+    subject: 'Delivered — Enjoy Your Maison Lune Fragrance',
+    headline: 'YOUR CREATION HAS BEEN DELIVERED',
+    subheadline: 'Your package has been successfully delivered. We invite you to discover the olfactory symphony inside.',
+    estimatedDeliveryNote: 'Delivered: Handed over / placed securely at destination address.',
+  },
 ];
 
-const STATUS_MESSAGES = {
-  ordered: {
-    subject: 'Order Confirmed',
-    heading: 'YOUR ORDER HAS BEEN CONFIRMED',
-    message: 'Thank you for choosing Maison Lune. Your order has been received and is being prepared by our atelier team with meticulous care.',
-  },
-  dispatched: {
-    subject: 'Order Dispatched',
-    heading: 'YOUR ORDER HAS BEEN DISPATCHED',
-    message: 'Your Maison Lune creation has been carefully packaged and dispatched from our atelier. It is now on its way to you.',
-  },
-  out_for_delivery: {
-    subject: 'Out for Delivery',
-    heading: 'YOUR ORDER IS OUT FOR DELIVERY',
-    message: 'Your Maison Lune creation is out for delivery and will arrive today. Please ensure someone is available to receive your package.',
-  },
-  delivered: {
-    subject: 'Order Delivered',
-    heading: 'YOUR ORDER HAS BEEN DELIVERED',
-    message: 'Your Maison Lune creation has been successfully delivered. We hope you enjoy your new fragrance. Thank you for your patronage.',
-  },
-};
+// Normalize status key to one of the 4 valid stages
+export function normalizeStageKey(status) {
+  const s = String(status || '').toLowerCase().trim();
+  if (s === 'ordered' || s === 'pending' || s === 'processing' || s === 'confirmed') return 'ordered';
+  if (s === 'dispatched' || s === 'dispatch' || s === 'shipped' || s === 'in_transit') return 'dispatched';
+  if (s === 'out_for_delivery' || s === 'out-for-delivery' || s === 'out for delivery' || s === 'out_of_delivery') return 'out_for_delivery';
+  if (s === 'delivered' || s === 'received' || s === 'completed') return 'delivered';
+  return 'ordered';
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HTML Template Helpers
+// HTML Builders for Luxury Email
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Generate the 4-stage order tracker HTML (matching the frontend UI)
+ * Visual 4-Stage Stepper Bar
  */
-function buildStageTrackerHtml(currentStatus) {
-  const currentIndex = ORDER_STAGES.findIndex(s => s.key === currentStatus);
+function buildStageTrackerHtml(currentKey) {
+  const activeKey = normalizeStageKey(currentKey);
+  const currentIndex = ORDER_STAGES.findIndex(s => s.key === activeKey);
 
-  const stages = ORDER_STAGES.map((stage, idx) => {
-    const isActive = idx <= currentIndex;
+  const stageCells = ORDER_STAGES.map((stg, idx) => {
+    const isCompleted = idx < currentIndex;
     const isCurrent = idx === currentIndex;
+    const isPending = idx > currentIndex;
 
-    const circleBg = isActive ? '#111111' : '#E5E5E5';
-    const circleColor = isActive ? '#FFFFFF' : '#999999';
-    const labelColor = isCurrent ? '#111111' : '#888888';
-    const labelWeight = isCurrent ? 'bold' : 'normal';
+    let circleBg = '#E5E7EB';
+    let circleText = '#9CA3AF';
+    let labelColor = '#9CA3AF';
+    let labelWeight = '500';
+    let borderStyle = 'none';
+
+    if (isCompleted) {
+      circleBg = '#111111';
+      circleText = '#C08A3E';
+      labelColor = '#111111';
+      labelWeight = '700';
+    } else if (isCurrent) {
+      circleBg = stg.color;
+      circleText = '#FFFFFF';
+      labelColor = '#111111';
+      labelWeight = '800';
+      borderStyle = `2px solid ${stg.color}`;
+    }
+
+    const stepContent = isCompleted
+      ? `<span style="font-size:14px;color:#C08A3E;">✓</span>`
+      : stg.number;
 
     return `
-      <td style="text-align:center;padding:0 8px;vertical-align:top;">
-        <div style="width:40px;height:40px;border-radius:50%;background:${circleBg};color:${circleColor};font-size:13px;font-weight:bold;line-height:40px;text-align:center;margin:0 auto 6px auto;">
-          ${stage.number}
+      <td style="text-align:center;padding:0 4px;vertical-align:top;width:25%;">
+        <div style="width:36px;height:36px;border-radius:50%;background:${circleBg};color:${circleText};font-size:12px;font-weight:bold;line-height:36px;text-align:center;margin:0 auto 6px auto;font-family:system-ui,-apple-system,sans-serif;${borderStyle !== 'none' ? `box-shadow:0 0 0 3px ${stg.bgLight};` : ''}">
+          ${stepContent}
         </div>
-        <div style="font-size:9px;letter-spacing:1.5px;color:${labelColor};font-weight:${labelWeight};font-family:Helvetica,Arial,sans-serif;">
-          ${stage.label}
+        <div style="font-size:9px;letter-spacing:1px;color:${labelColor};font-weight:${labelWeight};font-family:system-ui,-apple-system,sans-serif;text-transform:uppercase;line-height:1.2;">
+          ${stg.label}
         </div>
       </td>
     `;
   }).join('');
 
-  // Connector line between circles
   return `
-    <table cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;">
-      <tr>${stages}</tr>
+    <table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:12px 0 0 0;">
+      <tr>${stageCells}</tr>
     </table>
   `;
 }
 
 /**
- * Generate product items table rows
+ * Build Itemized Products List
  */
 function buildItemsHtml(items) {
-  if (!items || items.length === 0) return '';
+  if (!items || items.length === 0) {
+    return `
+      <tr>
+        <td style="padding:16px;text-align:center;color:#888888;font-size:12px;font-style:italic;">
+          Standard Maison Lune Atelier Order Selection
+        </td>
+      </tr>
+    `;
+  }
 
-  return items.map(item => {
-    const productName = item.product?.name || item.product_name || 'Maison Lune Creation';
-    const frenchName = item.product?.french_name || '';
-    const size = item.size || 'Full Size';
-    const qty = item.quantity || 1;
-    const unitPrice = Number(item.unit_price || 0);
+  return items.map((item, idx) => {
+    const productName = item.product?.name || item.product_name || item.name || 'Maison Lune Fragrance';
+    const frenchName = item.product?.french_name || item.french_name || item.product?.frenchName || '';
+    const size = item.size || '50 ml';
+    const qty = Number(item.quantity || item.qty || 1);
+    const unitPrice = Number(item.unit_price || item.price || 0);
     const lineTotal = (unitPrice * qty).toFixed(2);
-    const imageUrl = item.product?.image_url || '';
-    const engraving = item.engraving_text || item.engravingText || item.engraving;
+    const imageUrl = item.product?.image_url || item.image_url || item.image || '';
+    const engraving = item.engraving_text || item.engravingText || item.engraving || null;
+
+    const isLast = idx === items.length - 1;
+    const borderBottom = isLast ? 'none' : '1px solid #F0F0F0';
 
     const imageHtml = imageUrl
-      ? `<img src="${imageUrl}" alt="${productName}" width="60" height="60" style="border-radius:6px;object-fit:cover;border:1px solid #E5E5E5;" />`
-      : `<div style="width:60px;height:60px;border-radius:6px;background:#F4F4F4;border:1px solid #E5E5E5;"></div>`;
+      ? `<img src="${imageUrl}" alt="${productName}" width="64" height="64" style="border-radius:10px;object-fit:contain;background:#FFFFFF;border:1px solid #EAEAEA;display:block;" />`
+      : `<div style="width:64px;height:64px;border-radius:10px;background:#F8F8F8;border:1px solid #EAEAEA;text-align:center;line-height:64px;font-size:20px;">🧴</div>`;
 
     return `
       <tr>
-        <td style="padding:12px 0;border-bottom:1px solid #F0F0F0;vertical-align:top;">
+        <td style="padding:16px 0;border-bottom:${borderBottom};vertical-align:top;">
           <table cellpadding="0" cellspacing="0" border="0" width="100%">
             <tr>
-              <td width="70" style="vertical-align:top;">
+              <td width="72" style="vertical-align:top;">
                 ${imageHtml}
               </td>
-              <td style="padding-left:12px;vertical-align:top;">
-                <div style="font-family:Helvetica,Arial,sans-serif;font-size:13px;font-weight:bold;color:#111111;text-transform:uppercase;letter-spacing:0.5px;">
+              <td style="padding-left:14px;vertical-align:top;">
+                <div style="font-family:system-ui,-apple-system,sans-serif;font-size:13px;font-weight:700;color:#111111;text-transform:uppercase;letter-spacing:0.5px;">
                   ${productName}
                 </div>
-                ${frenchName ? `<div style="font-family:Helvetica,Arial,sans-serif;font-size:11px;color:#888888;font-style:italic;margin-top:2px;">${frenchName}</div>` : ''}
-                ${engraving ? `<div style="font-family:Helvetica,Arial,sans-serif;font-size:11px;color:#C08A3E;font-style:italic;margin-top:2px;">Engraving: "${engraving}"</div>` : ''}
-                <div style="font-family:Helvetica,Arial,sans-serif;font-size:11px;color:#666666;margin-top:4px;">
-                  SIZE: ${size} &nbsp;•&nbsp; QTY: ${qty}
+                ${frenchName ? `<div style="font-family:Georgia,serif;font-size:11px;color:#777777;font-style:italic;margin-top:2px;">${frenchName}</div>` : ''}
+                
+                <div style="font-family:system-ui,-apple-system,sans-serif;font-size:11px;color:#555555;margin-top:6px;">
+                  <span style="font-weight:600;color:#111111;">SIZE:</span> ${size} &nbsp;•&nbsp; 
+                  <span style="font-weight:600;color:#111111;">QTY:</span> ${qty} &nbsp;•&nbsp; 
+                  <span style="color:#666666;">$${unitPrice.toFixed(2)} USD each</span>
                 </div>
+
+                ${engraving ? `
+                  <div style="margin-top:6px;display:inline-block;padding:3px 8px;background:#FEF3C7;border:1px solid #FDE68A;border-radius:6px;font-size:10px;color:#92400E;font-family:system-ui,-apple-system,sans-serif;font-weight:600;">
+                    ✨ BOTTLE ENGRAVING: "${engraving}"
+                  </div>
+                ` : ''}
               </td>
-              <td style="text-align:right;vertical-align:top;white-space:nowrap;">
-                <div style="font-family:Helvetica,Arial,sans-serif;font-size:14px;font-weight:bold;color:#111111;">
-                  $${lineTotal} USD
+              <td style="text-align:right;vertical-align:top;white-space:nowrap;padding-left:10px;">
+                <div style="font-family:system-ui,-apple-system,sans-serif;font-size:14px;font-weight:800;color:#111111;">
+                  $${lineTotal} <span style="font-size:10px;font-weight:500;color:#666666;">USD</span>
                 </div>
               </td>
             </tr>
@@ -138,57 +224,112 @@ function buildItemsHtml(items) {
 }
 
 /**
- * Build shipping address & customer contact block
+ * Build Formatted Delivery & Recipient Card
  */
-function buildShippingHtml(address, userEmail) {
-  if (!address && !userEmail) return '';
+function buildShippingCardHtml(address, customerEmail, guestName, guestPhone) {
+  const addr = address || {};
+  const recipientName = addr.fullName || addr.full_name || addr.name || guestName || 'Valued Patron';
+  const phone = addr.phone || guestPhone || 'Not specified';
+  const email = customerEmail || addr.email || 'Not specified';
 
-  const parts = [
-    address?.fullName || address?.full_name || address?.name,
-    address?.street || address?.street_address,
-    [address?.city, address?.state].filter(Boolean).join(', '),
-    [address?.postalCode || address?.postal_code, address?.country].filter(Boolean).join(' — '),
-    address?.phone ? `Tel: ${address.phone}` : null,
-    (userEmail || address?.email) ? `Email: ${userEmail || address?.email}` : null,
-  ].filter(Boolean);
+  const addressLine1 = addr.street || addr.street_address || addr.address || '';
+  const cityStateZip = [
+    addr.city,
+    addr.state,
+    addr.postalCode || addr.postal_code || addr.zip
+  ].filter(Boolean).join(', ');
+  const country = addr.country || 'International';
 
-  return parts
-    .map(p => `<div style="font-family:Helvetica,Arial,sans-serif;font-size:12px;color:#444444;line-height:1.6;">${p}</div>`)
-    .join('');
+  const formattedAddress = [addressLine1, cityStateZip, country].filter(Boolean).join(' — ') || 'Atelier Vault Delivery';
+
+  return `
+    <table cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#F9F9FB;border:1px solid #EBEBF0;border-radius:12px;padding:16px;">
+      <tr>
+        <td style="padding:16px;">
+          <table cellpadding="0" cellspacing="0" border="0" width="100%">
+            <tr>
+              <td width="50%" style="vertical-align:top;padding-right:12px;border-right:1px solid #EAEAEA;">
+                <div style="font-family:system-ui,-apple-system,sans-serif;font-size:10px;font-weight:700;letter-spacing:1.5px;color:#C08A3E;text-transform:uppercase;">
+                  RECIPIENT & CONTACT
+                </div>
+                <div style="font-family:system-ui,-apple-system,sans-serif;font-size:13px;font-weight:700;color:#111111;margin-top:6px;">
+                  ${recipientName}
+                </div>
+                <div style="font-family:system-ui,-apple-system,sans-serif;font-size:11px;color:#555555;margin-top:3px;">
+                  📞 ${phone}
+                </div>
+                <div style="font-family:system-ui,-apple-system,sans-serif;font-size:11px;color:#2563EB;margin-top:2px;">
+                  ✉️ ${email}
+                </div>
+              </td>
+              <td width="50%" style="vertical-align:top;padding-left:16px;">
+                <div style="font-family:system-ui,-apple-system,sans-serif;font-size:10px;font-weight:700;letter-spacing:1.5px;color:#C08A3E;text-transform:uppercase;">
+                  DELIVERY DESTINATION
+                </div>
+                <div style="font-family:system-ui,-apple-system,sans-serif;font-size:12px;color:#222222;margin-top:6px;line-height:1.5;">
+                  ${formattedAddress}
+                </div>
+                <div style="font-family:system-ui,-apple-system,sans-serif;font-size:10px;color:#059669;font-weight:600;margin-top:4px;">
+                  ✓ Signature Required Delivery
+                </div>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  `;
 }
 
 /**
- * Format order ID for display (first 8 chars uppercase)
+ * Format Order Reference #
  */
 function formatOrderId(id) {
-  if (!id) return 'N/A';
-  return `#${String(id).substring(0, 8).toUpperCase()}`;
+  if (!id) return 'ML-00000';
+  const clean = String(id).replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+  return `#${clean.substring(0, 8)}`;
 }
 
 /**
- * Format date for display
+ * Format Date String
  */
 function formatDate(dateStr) {
   try {
-    const d = new Date(dateStr);
-    return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+    const d = dateStr ? new Date(dateStr) : new Date();
+    return d.toLocaleDateString('en-US', {
+      weekday: 'short',
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
   } catch {
-    return 'N/A';
+    return 'Confirmed';
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Master Email Template
+// Master Haute Parfumerie Email Generator
 // ─────────────────────────────────────────────────────────────────────────────
-function buildEmailHtml({ order, items, status, statusInfo, userEmail }) {
+function buildLuxuryEmailHtml({ order, items, stageKey, customerEmail }) {
+  const activeKey = normalizeStageKey(stageKey || order.status);
+  const stageInfo = ORDER_STAGES.find(s => s.key === activeKey) || ORDER_STAGES[0];
+
   const orderId = formatOrderId(order.id);
   const orderDate = formatDate(order.created_at);
-  const subtotal = Number(order.subtotal || 0).toFixed(2);
-  const discount = Number(order.discount_amount || 0);
-  const total = Number(order.total || 0).toFixed(2);
   const shippingAddress = order.shipping_address || {};
 
-  const stageBadgeColor = status === 'delivered' ? '#059669' : '#111111';
+  // Financial calculations
+  let subtotal = Number(order.subtotal || 0);
+  if (subtotal === 0 && Array.isArray(items) && items.length > 0) {
+    subtotal = items.reduce((sum, it) => sum + (Number(it.unit_price || it.price || 0) * Number(it.quantity || 1)), 0);
+  }
+  const discount = Number(order.discount_amount || order.discount || 0);
+  let total = Number(order.total || order.total_amount || (subtotal - discount));
+  if (total < 0) total = 0;
+
+  const discountPercent = subtotal > 0 && discount > 0 ? Math.round((discount / subtotal) * 100) : 0;
 
   return `
 <!DOCTYPE html>
@@ -196,89 +337,99 @@ function buildEmailHtml({ order, items, status, statusInfo, userEmail }) {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1.0" />
-  <title>Maison Lune — ${statusInfo.subject}</title>
+  <title>Maison Lune — ${stageInfo.subject} (${orderId})</title>
 </head>
-<body style="margin:0;padding:0;background:#F5F5F0;font-family:Helvetica,Arial,sans-serif;">
-  <table cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#F5F5F0;padding:24px 0;">
+<body style="margin:0;padding:0;background-color:#F4F4F0;font-family:system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;">
+  <table cellpadding="0" cellspacing="0" border="0" width="100%" style="background-color:#F4F4F0;padding:24px 0 40px 0;">
     <tr>
       <td align="center">
-        <table cellpadding="0" cellspacing="0" border="0" width="600" style="max-width:600px;width:100%;background:#FFFFFF;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+        <!-- Main Email Container -->
+        <table cellpadding="0" cellspacing="0" border="0" width="620" style="max-width:620px;width:100%;background-color:#FFFFFF;border-radius:16px;overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,0.06);border:1px solid #E8E8E2;">
 
-          <!-- ═══ HEADER ═══ -->
+          <!-- ══════════════════ 1. BRAND HEADER ══════════════════ -->
           <tr>
-            <td style="background:#111111;padding:24px 32px;text-align:center;">
-              <div style="font-family:Helvetica,Arial,sans-serif;font-size:18px;font-weight:bold;letter-spacing:6px;color:#C08A3E;text-transform:uppercase;">
-                MAISON LUNE
-              </div>
-              <div style="font-family:Helvetica,Arial,sans-serif;font-size:9px;letter-spacing:4px;color:#888888;margin-top:4px;text-transform:uppercase;">
-                HAUTE PARFUMERIE · PARIS
-              </div>
-            </td>
-          </tr>
-
-          <!-- ═══ STATUS HEADING ═══ -->
-          <tr>
-            <td style="padding:32px 32px 8px 32px;text-align:center;">
-              <div style="font-family:Helvetica,Arial,sans-serif;font-size:11px;letter-spacing:3px;color:#888888;text-transform:uppercase;margin-bottom:8px;">
-                ORDER UPDATE
-              </div>
-              <div style="font-family:Helvetica,Arial,sans-serif;font-size:20px;font-weight:bold;color:#111111;letter-spacing:1px;">
-                ${statusInfo.heading}
-              </div>
-              <div style="font-family:Helvetica,Arial,sans-serif;font-size:13px;color:#555555;line-height:1.6;margin-top:12px;max-width:440px;margin-left:auto;margin-right:auto;">
-                ${statusInfo.message}
-              </div>
-            </td>
-          </tr>
-
-          <!-- ═══ ORDER INFO BAR ═══ -->
-          <tr>
-            <td style="padding:20px 32px;">
-              <table cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#F9F9FB;border-radius:8px;padding:16px;">
+            <td style="background-color:#111111;padding:28px 32px;text-align:center;">
+              <table cellpadding="0" cellspacing="0" border="0" width="100%">
                 <tr>
-                  <td style="padding:16px;">
-                    <table cellpadding="0" cellspacing="0" border="0" width="100%">
-                      <tr>
-                        <td>
-                          <div style="font-family:Helvetica,Arial,sans-serif;font-size:11px;letter-spacing:2px;color:#888888;text-transform:uppercase;">ORDER</div>
-                          <div style="font-family:Helvetica,Arial,sans-serif;font-size:16px;font-weight:bold;color:#111111;margin-top:2px;">${orderId}</div>
-                          <div style="font-family:Helvetica,Arial,sans-serif;font-size:11px;color:#888888;margin-top:2px;">${orderDate}</div>
-                        </td>
-                        <td style="text-align:right;vertical-align:top;">
-                          <div style="display:inline-block;background:${stageBadgeColor};color:#FFFFFF;font-family:Helvetica,Arial,sans-serif;font-size:10px;font-weight:bold;letter-spacing:1.5px;padding:6px 14px;border-radius:20px;text-transform:uppercase;">
-                            STAGE: ${statusInfo.subject.toUpperCase()}
-                          </div>
-                        </td>
-                      </tr>
-                    </table>
+                  <td align="center">
+                    <div style="font-family:Georgia,serif;font-size:22px;font-weight:700;letter-spacing:7px;color:#C08A3E;text-transform:uppercase;">
+                      MAISON LUNE
+                    </div>
+                    <div style="font-family:system-ui,-apple-system,sans-serif;font-size:9px;letter-spacing:4px;color:#A0A0A0;margin-top:6px;text-transform:uppercase;">
+                      HAUTE PARFUMERIE · PARIS
+                    </div>
                   </td>
                 </tr>
               </table>
             </td>
           </tr>
 
-          <!-- ═══ STAGE TRACKER ═══ -->
+          <!-- ══════════════════ 2. STAGE STATUS HERO BANNER ══════════════════ -->
           <tr>
-            <td style="padding:8px 32px 24px 32px;text-align:center;">
-              <div style="font-family:Helvetica,Arial,sans-serif;font-size:10px;letter-spacing:2px;color:#888888;text-transform:uppercase;margin-bottom:16px;">
-                LIVE ORDER STAGE
+            <td style="padding:28px 32px 16px 32px;text-align:center;background-color:#FAFAFA;border-bottom:1px solid #EEEEEE;">
+              <!-- Stage Pill Badge -->
+              <div style="display:inline-block;background-color:${stageInfo.bgLight};color:${stageInfo.color};font-family:system-ui,-apple-system,sans-serif;font-size:10px;font-weight:800;letter-spacing:2px;padding:6px 16px;border-radius:24px;text-transform:uppercase;border:1px solid ${stageInfo.color}30;margin-bottom:12px;">
+                ● ${stageInfo.badgeText}
               </div>
-              ${buildStageTrackerHtml(status)}
+
+              <!-- Main Stage Headline -->
+              <div style="font-family:Georgia,serif;font-size:22px;font-weight:700;color:#111111;letter-spacing:0.5px;text-transform:uppercase;line-height:1.3;">
+                ${stageInfo.headline}
+              </div>
+
+              <!-- Stage Narrative Subtitle -->
+              <div style="font-family:system-ui,-apple-system,sans-serif;font-size:13px;color:#555555;line-height:1.6;margin-top:10px;max-width:480px;margin-left:auto;margin-right:auto;">
+                ${stageInfo.subheadline}
+              </div>
             </td>
           </tr>
 
-          <!-- ═══ DIVIDER ═══ -->
+          <!-- ══════════════════ 3. 4-STAGE LIVE PROGRESS STEPPER ══════════════════ -->
           <tr>
-            <td style="padding:0 32px;">
-              <div style="border-top:1px solid #E8E8E8;"></div>
+            <td style="padding:24px 32px;background-color:#FFFFFF;border-bottom:1px solid #F0F0F0;">
+              <div style="font-family:system-ui,-apple-system,sans-serif;font-size:10px;font-weight:800;letter-spacing:2px;color:#888888;text-transform:uppercase;text-align:center;margin-bottom:12px;">
+                FULFILLMENT TIMELINE (STAGE ${stageInfo.number} OF 04)
+              </div>
+              
+              ${buildStageTrackerHtml(activeKey)}
+
+              <div style="margin-top:16px;background-color:${stageInfo.bgLight};border-radius:8px;padding:10px 14px;text-align:center;font-size:11px;color:${stageInfo.color};font-family:system-ui,-apple-system,sans-serif;font-weight:600;">
+                ℹ️ ${stageInfo.estimatedDeliveryNote}
+              </div>
             </td>
           </tr>
 
-          <!-- ═══ ITEMS LIST ═══ -->
+          <!-- ══════════════════ 4. ORDER REFERENCE BAR ══════════════════ -->
+          <tr>
+            <td style="padding:18px 32px;background-color:#F9F9FB;border-bottom:1px solid #EEEEEE;">
+              <table cellpadding="0" cellspacing="0" border="0" width="100%">
+                <tr>
+                  <td>
+                    <div style="font-family:system-ui,-apple-system,sans-serif;font-size:10px;font-weight:700;letter-spacing:1.5px;color:#888888;text-transform:uppercase;">
+                      ORDER REFERENCE
+                    </div>
+                    <div style="font-family:Georgia,serif;font-size:18px;font-weight:700;color:#111111;margin-top:2px;">
+                      ${orderId}
+                    </div>
+                    <div style="font-family:system-ui,-apple-system,sans-serif;font-size:11px;color:#666666;margin-top:2px;">
+                      Placed on ${orderDate}
+                    </div>
+                  </td>
+                  <td style="text-align:right;vertical-align:middle;">
+                    <div style="display:inline-block;padding:6px 12px;background-color:#EBFBF3;border:1px solid #10B98130;border-radius:8px;font-size:11px;font-weight:700;color:#065F46;font-family:system-ui,-apple-system,sans-serif;">
+                      ✓ PAYMENT CONFIRMED
+                    </div>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- ══════════════════ 5. ITEMIZED CREATIONS ══════════════════ -->
           <tr>
             <td style="padding:24px 32px 8px 32px;">
-              <div style="font-family:Helvetica,Arial,sans-serif;font-size:11px;letter-spacing:2px;color:#888888;text-transform:uppercase;margin-bottom:12px;">
-                CREATIONS INCLUDED (${items.length})
+              <div style="font-family:system-ui,-apple-system,sans-serif;font-size:11px;font-weight:800;letter-spacing:2px;color:#C08A3E;text-transform:uppercase;margin-bottom:8px;">
+                CREATIONS IN THIS ORDER (${items.length})
               </div>
               <table cellpadding="0" cellspacing="0" border="0" width="100%">
                 ${buildItemsHtml(items)}
@@ -286,33 +437,66 @@ function buildEmailHtml({ order, items, status, statusInfo, userEmail }) {
             </td>
           </tr>
 
-          <!-- ═══ TOTALS ═══ -->
+          <!-- ══════════════════ 6. FINANCIAL BREAKDOWN ══════════════════ -->
           <tr>
             <td style="padding:16px 32px;">
-              <table cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#F9F9FB;border-radius:8px;">
+              <table cellpadding="0" cellspacing="0" border="0" width="100%" style="background-color:#F9F9FB;border:1px solid #EBEBF0;border-radius:12px;">
                 <tr>
-                  <td style="padding:16px;">
+                  <td style="padding:18px;">
                     <table cellpadding="0" cellspacing="0" border="0" width="100%">
+                      <!-- Actual Amount (Subtotal) -->
                       <tr>
-                        <td style="font-family:Helvetica,Arial,sans-serif;font-size:12px;color:#666666;padding:4px 0;">Subtotal</td>
-                        <td style="font-family:Helvetica,Arial,sans-serif;font-size:12px;color:#111111;text-align:right;padding:4px 0;">$${subtotal} USD</td>
+                        <td style="font-family:system-ui,-apple-system,sans-serif;font-size:12px;font-weight:600;color:#555555;padding:4px 0;">
+                          1. Actual Amount (Subtotal)
+                        </td>
+                        <td style="font-family:system-ui,-apple-system,sans-serif;font-size:12px;font-weight:700;color:#111111;text-align:right;padding:4px 0;">
+                          $${subtotal.toFixed(2)} USD
+                        </td>
                       </tr>
+
+                      <!-- Coupon Discount -->
                       ${discount > 0 ? `
                       <tr>
-                        <td style="font-family:Helvetica,Arial,sans-serif;font-size:12px;color:#059669;padding:4px 0;">Discount</td>
-                        <td style="font-family:Helvetica,Arial,sans-serif;font-size:12px;color:#059669;text-align:right;padding:4px 0;">-$${discount.toFixed(2)} USD</td>
+                        <td style="font-family:system-ui,-apple-system,sans-serif;font-size:12px;font-weight:600;color:#C08A3E;padding:4px 0;">
+                          2. Coupon Discount ${discountPercent > 0 ? `(-${discountPercent}%)` : ''}
+                        </td>
+                        <td style="font-family:system-ui,-apple-system,sans-serif;font-size:12px;font-weight:700;color:#C08A3E;text-align:right;padding:4px 0;">
+                          -$${discount.toFixed(2)} USD
+                        </td>
                       </tr>
-                      ` : ''}
+                      ` : `
                       <tr>
-                        <td style="font-family:Helvetica,Arial,sans-serif;font-size:12px;color:#666666;padding:4px 0;">Shipping</td>
-                        <td style="font-family:Helvetica,Arial,sans-serif;font-size:12px;color:#111111;text-align:right;padding:4px 0;">Complimentary</td>
+                        <td style="font-family:system-ui,-apple-system,sans-serif;font-size:12px;font-weight:600;color:#888888;padding:4px 0;">
+                          2. Coupon Discount
+                        </td>
+                        <td style="font-family:system-ui,-apple-system,sans-serif;font-size:12px;font-weight:600;color:#888888;text-align:right;padding:4px 0;">
+                          $0.00 USD
+                        </td>
                       </tr>
+                      `}
+
+                      <!-- Luxury Delivery -->
                       <tr>
-                        <td colspan="2" style="padding:8px 0 0 0;border-top:1px solid #E0E0E0;"></td>
+                        <td style="font-family:system-ui,-apple-system,sans-serif;font-size:12px;font-weight:600;color:#555555;padding:4px 0;">
+                          Complimentary Atelier Express Delivery
+                        </td>
+                        <td style="font-family:system-ui,-apple-system,sans-serif;font-size:12px;font-weight:700;color:#059669;text-align:right;padding:4px 0;">
+                          FREE (Included)
+                        </td>
                       </tr>
+
                       <tr>
-                        <td style="font-family:Helvetica,Arial,sans-serif;font-size:16px;font-weight:bold;color:#111111;padding:4px 0;">Total</td>
-                        <td style="font-family:Helvetica,Arial,sans-serif;font-size:16px;font-weight:bold;color:#111111;text-align:right;padding:4px 0;">$${total} USD</td>
+                        <td colspan="2" style="padding:10px 0 0 0;border-top:1px solid #E2E2EA;"></td>
+                      </tr>
+
+                      <!-- Final Amount Paid -->
+                      <tr>
+                        <td style="font-family:system-ui,-apple-system,sans-serif;font-size:14px;font-weight:800;color:#111111;text-transform:uppercase;padding:4px 0;">
+                          3. Final Amount Paid
+                        </td>
+                        <td style="font-family:Georgia,serif;font-size:20px;font-weight:700;color:#111111;text-align:right;padding:4px 0;">
+                          $${total.toFixed(2)} <span style="font-size:11px;font-family:system-ui,sans-serif;font-weight:600;color:#666666;">USD</span>
+                        </td>
                       </tr>
                     </table>
                   </td>
@@ -321,29 +505,45 @@ function buildEmailHtml({ order, items, status, statusInfo, userEmail }) {
             </td>
           </tr>
 
-          <!-- ═══ SHIPPING & CONTACT ADDRESS ═══ -->
+          <!-- ══════════════════ 7. DELIVERY & RECIPIENT CARD ══════════════════ -->
           <tr>
-            <td style="padding:16px 32px 24px 32px;">
-              <div style="font-family:Helvetica,Arial,sans-serif;font-size:11px;letter-spacing:2px;color:#888888;text-transform:uppercase;margin-bottom:10px;">
-                DELIVERY & CONTACT DETAILS
+            <td style="padding:12px 32px 24px 32px;">
+              <div style="font-family:system-ui,-apple-system,sans-serif;font-size:11px;font-weight:800;letter-spacing:2px;color:#C08A3E;text-transform:uppercase;margin-bottom:8px;">
+                DELIVERY DETAILS
               </div>
-              <div style="background:#F9F9FB;border-radius:8px;padding:16px;">
-                ${buildShippingHtml(shippingAddress, userEmail)}
+              ${buildShippingCardHtml(shippingAddress, customerEmail, order.guest_name, order.guest_phone)}
+            </td>
+          </tr>
+
+          <!-- ══════════════════ 8. CONCIERGE & SUPPORT CTA ══════════════════ -->
+          <tr>
+            <td style="padding:20px 32px;background-color:#FAFAFA;border-top:1px solid #EEEEEE;text-align:center;">
+              <div style="font-family:Georgia,serif;font-size:14px;font-weight:700;color:#111111;">
+                NEED ASSISTANCE WITH YOUR ORDER?
+              </div>
+              <div style="font-family:system-ui,-apple-system,sans-serif;font-size:12px;color:#666666;margin-top:4px;">
+                Our Haute Parfumerie Concierge is available 7 days a week for olfactory guidance.
+              </div>
+              <div style="margin-top:12px;">
+                <a href="mailto:${REPLY_TO_EMAIL}?subject=Inquiry%20regarding%20Order%20${orderId}" style="display:inline-block;padding:10px 22px;background-color:#111111;color:#C08A3E;text-decoration:none;font-family:system-ui,-apple-system,sans-serif;font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;border-radius:30px;border:1px solid #C08A3E;">
+                  CONTACT CONCIERGE ATELIER
+                </a>
               </div>
             </td>
           </tr>
 
-          <!-- ═══ FOOTER ═══ -->
+          <!-- ══════════════════ 9. LUXURY FOOTER ══════════════════ -->
           <tr>
-            <td style="background:#111111;padding:28px 32px;text-align:center;">
-              <div style="font-family:Helvetica,Arial,sans-serif;font-size:12px;color:#AAAAAA;line-height:1.6;">
-                Thank you for choosing Maison Lune.
+            <td style="background-color:#111111;padding:32px;text-align:center;">
+              <div style="font-family:Georgia,serif;font-size:14px;color:#C08A3E;letter-spacing:4px;text-transform:uppercase;">
+                MAISON LUNE
               </div>
-              <div style="font-family:Helvetica,Arial,sans-serif;font-size:11px;color:#666666;margin-top:8px;">
-                Questions? Contact us at <a href="mailto:support@maisonlune.com" style="color:#C08A3E;text-decoration:none;">support@maisonlune.com</a>
+              <div style="font-family:system-ui,-apple-system,sans-serif;font-size:11px;color:#888888;margin-top:8px;line-height:1.6;">
+                Exceptional French Haute Parfumerie · Hand-Crafted In Small Batches
               </div>
-              <div style="font-family:Helvetica,Arial,sans-serif;font-size:9px;letter-spacing:3px;color:#555555;margin-top:16px;text-transform:uppercase;">
-                MAISON LUNE · HAUTE PARFUMERIE
+              <div style="font-family:system-ui,-apple-system,sans-serif;font-size:10px;color:#555555;margin-top:16px;">
+                © ${new Date().getFullYear()} Maison Lune Parfums Paris. All rights reserved.<br />
+                This is an automated transactional update regarding order ${orderId}.
               </div>
             </td>
           </tr>
@@ -358,99 +558,249 @@ function buildEmailHtml({ order, items, status, statusInfo, userEmail }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Public API: Send Order Confirmation Email
+// Database Helper: Full Order & Items Resolution
 // ─────────────────────────────────────────────────────────────────────────────
 /**
- * Send an order confirmation email with full invoice when an order is placed.
- * @param {Object} order - The order record from the database
- * @param {Array} items - Array of order items (with nested product info)
- * @param {string} userEmail - Customer's email address
+ * Fully resolves an order object with its order_items and product details
+ * regardless of PostgREST schema variations.
  */
-export const sendOrderConfirmationEmail = async (order, items, userEmail) => {
-  if (!resend) {
-    console.warn('📧 Email skipped: RESEND_API_KEY not configured. Set it in .env to enable order confirmation emails.');
-    return;
+export async function fetchFullOrderForEmail(orderIdOrObject) {
+  let order = orderIdOrObject;
+
+  // If passed an ID string, fetch the order from DB
+  if (typeof orderIdOrObject === 'string' || typeof orderIdOrObject === 'number') {
+    const { data, error } = await supabaseAdmin
+      .from('orders')
+      .select('*')
+      .eq('id', orderIdOrObject)
+      .single();
+
+    if (error || !data) {
+      throw new Error(`Order ${orderIdOrObject} not found: ${error?.message}`);
+    }
+    order = data;
   }
 
-  if (!userEmail) {
-    console.warn('📧 Email skipped: No customer email address available for order', order.id);
-    return;
+  // Parse shipping_address if it is a JSON string
+  if (order.shipping_address && typeof order.shipping_address === 'string') {
+    try {
+      order.shipping_address = JSON.parse(order.shipping_address);
+    } catch {
+      // keep as is
+    }
   }
 
+  // Fetch order items for this order
+  const { data: orderItems, error: itemsErr } = await supabaseAdmin
+    .from('order_items')
+    .select('*')
+    .eq('order_id', order.id);
+
+  if (itemsErr) {
+    console.error('📧 Error fetching order_items for email:', itemsErr.message);
+  }
+
+  const rawItems = orderItems || [];
+
+  // Fetch products catalog to resolve complete metadata (images, french_name, etc.)
+  const products = await getAllProductsFromDb().catch(() => []);
+  const prodMap = new Map();
+  products.forEach(p => {
+    prodMap.set(p.id, {
+      name: p.name,
+      french_name: p.french_name || p.frenchName || p.name,
+      image_url: p.image_url || p.imageUrl || p.image || (p.images?.[0]?.url) || ''
+    });
+  });
+
+  const enrichedItems = rawItems.map(item => {
+    const prod = prodMap.get(item.product_id) || {
+      name: item.product_name || 'Maison Lune Creation',
+      french_name: '',
+      image_url: ''
+    };
+    return {
+      ...item,
+      product: prod
+    };
+  });
+
+  // Resolve customer email address
+  let customerEmail = order.guest_email || order.shipping_address?.email || order.shipping_address?.userEmail || null;
+
+  if (!customerEmail && order.user_id) {
+    // Check profiles table
+    const { data: profile } = await supabaseAdmin
+      .from('profiles')
+      .select('email')
+      .eq('id', order.user_id)
+      .single();
+    if (profile?.email) customerEmail = profile.email;
+  }
+
+  if (!customerEmail && order.user_id) {
+    // Check Supabase Auth Users
+    const { data: authData } = await supabaseAdmin.auth.admin.getUserById(order.user_id).catch(() => ({ data: {} }));
+    if (authData?.user?.email) customerEmail = authData.user.email;
+  }
+
+  return {
+    order,
+    items: enrichedItems,
+    customerEmail
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Public API: Send Order Confirmation Email (Initial Placement)
+// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * Send an ultra-professional order confirmation email when an order is placed.
+ * @param {Object|string} orderOrId - Database order object or order ID string
+ * @param {Array} [providedItems] - Optional pre-loaded items array
+ * @param {string} [providedEmail] - Optional pre-resolved customer email
+ */
+// ─────────────────────────────────────────────────────────────────────────────
+// Universal Email Delivery Engine (SMTP / Gmail + Resend)
+// ─────────────────────────────────────────────────────────────────────────────
+async function dispatchEmail({ recipient, subject, html }) {
+  if (!recipient) {
+    console.warn('📧 Email skipped: No recipient email address provided.');
+    return { success: false, reason: 'Recipient email missing' };
+  }
+
+  // 1. Direct Gmail / SMTP Delivery (Works immediately for ANY customer email without domain verification)
+  if (smtpTransporter) {
+    try {
+      console.log(`📧 Dispatching email via Gmail SMTP to customer: ${recipient} | Subject: "${subject}"...`);
+      const info = await smtpTransporter.sendMail({
+        from: `"${SENDER_NAME}" <${smtpUser}>`,
+        replyTo: REPLY_TO_EMAIL,
+        to: recipient,
+        subject,
+        html,
+      });
+
+      console.log(`✅ Email delivered to customer via Gmail SMTP: ${recipient} (Message ID: ${info.messageId})`);
+      return { success: true, id: info.messageId, provider: 'smtp', recipient };
+    } catch (smtpErr) {
+      console.error(`❌ SMTP Error for ${recipient}:`, smtpErr.message);
+    }
+  }
+
+  // 2. Resend API Delivery
+  if (resend) {
+    try {
+      console.log(`📧 Dispatching email via Resend to customer: ${recipient} | Subject: "${subject}"...`);
+      const { data, error } = await resend.emails.send({
+        from: `${SENDER_NAME} <${SENDER_EMAIL}>`,
+        reply_to: REPLY_TO_EMAIL,
+        to: [recipient],
+        subject,
+        html,
+      });
+
+      if (!error) {
+        console.log(`✅ Email delivered to customer via Resend: ${recipient} (Resend ID: ${data?.id})`);
+        return { success: true, id: data?.id, provider: 'resend', recipient };
+      }
+
+      console.error(`❌ Resend API Error for customer (${recipient}):`, error.message || error);
+      return { success: false, error };
+    } catch (err) {
+      console.error(`❌ Resend Exception for ${recipient}:`, err.message);
+      return { success: false, error: err.message };
+    }
+  }
+
+  console.warn('📧 Email skipped: Neither SMTP (SMTP_PASS) nor Resend (RESEND_API_KEY) configured.');
+  return { success: false, reason: 'No email service configured' };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Public API: Send Order Confirmation Email (Initial Placement)
+// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * Send an ultra-professional order confirmation email when an order is placed.
+ * @param {Object|string} orderOrId - Database order object or order ID string
+ * @param {Array} [providedItems] - Optional pre-loaded items array
+ * @param {string} [providedEmail] - Optional pre-resolved customer email
+ */
+export const sendOrderConfirmationEmail = async (orderOrId, providedItems = null, providedEmail = null) => {
   try {
-    const status = 'ordered';
-    const statusInfo = STATUS_MESSAGES[status];
+    const { order, items, customerEmail } = await fetchFullOrderForEmail(orderOrId);
+    const recipient = providedEmail || customerEmail;
+    const finalItems = (providedItems && providedItems.length > 0) ? providedItems : items;
 
-    const html = buildEmailHtml({ order, items, status, statusInfo, userEmail });
+    if (!recipient) {
+      console.warn('📧 Email skipped: No customer recipient email found for order', order.id);
+      return { success: false, reason: 'Recipient email missing' };
+    }
 
-    const { data, error } = await resend.emails.send({
-      from: `${SENDER_NAME} <${SENDER_EMAIL}>`,
-      reply_to: REPLY_TO_EMAIL,
-      to: [userEmail],
-      subject: `${statusInfo.subject} — Order ${formatOrderId(order.id)}`,
-      html,
+    const stageKey = 'ordered';
+    const stageInfo = ORDER_STAGES[0];
+    const orderIdFormatted = formatOrderId(order.id);
+
+    const html = buildLuxuryEmailHtml({
+      order,
+      items: finalItems,
+      stageKey,
+      customerEmail: recipient
     });
 
-    if (error) {
-      console.error(`📧 Failed to send order confirmation email to ${userEmail}:`, error.message || error);
-      if (error.statusCode === 403 || (error.message && error.message.includes('onboarding'))) {
-        console.warn('💡 Tip: On Resend free test mode (onboarding@resend.dev), emails can only be sent to the Resend account owner email. Verify a custom domain in Resend to send to all customer emails.');
-      }
-    } else {
-      console.log(`📧 Order confirmation email sent to ${userEmail} (Resend ID: ${data?.id})`);
-    }
+    console.log(`📧 Dispatching Order Confirmation email to customer ${recipient} (Order ${orderIdFormatted})...`);
+
+    return await dispatchEmail({
+      recipient,
+      subject: `Order Confirmed ${orderIdFormatted} — Maison Lune Haute Parfumerie`,
+      html,
+    });
   } catch (err) {
-    console.error('📧 Error sending order confirmation email:', err.message);
+    console.error('📧 Unexpected error in sendOrderConfirmationEmail:', err.message);
+    return { success: false, error: err.message };
   }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Public API: Send Order Status Update Email
+// Public API: Send Live Order Stage Update Email (Admin Triggered)
 // ─────────────────────────────────────────────────────────────────────────────
 /**
- * Send a status update email when an order stage changes.
- * @param {Object} order - The full order record
- * @param {Array} items - Array of order items (with nested product info)
- * @param {string} userEmail - Customer's email address
- * @param {string} newStatus - The new order status key (ordered, dispatched, out_for_delivery, delivered)
+ * Send an updated status email when an admin modifies the order stage.
+ * @param {Object|string} orderOrId - Database order object or order ID string
+ * @param {Array} [providedItems] - Optional pre-loaded items array
+ * @param {string} [providedEmail] - Optional pre-resolved customer email
+ * @param {string} newStatus - The new stage key (ordered, dispatched, out_for_delivery, delivered)
  */
-export const sendOrderStatusUpdateEmail = async (order, items, userEmail, newStatus) => {
-  if (!resend) {
-    console.warn('📧 Email skipped: RESEND_API_KEY not configured. Set it in .env to enable status update emails.');
-    return;
-  }
-
-  if (!userEmail) {
-    console.warn('📧 Email skipped: No customer email address available for order', order.id);
-    return;
-  }
-
-  const statusInfo = STATUS_MESSAGES[newStatus];
-  if (!statusInfo) {
-    console.warn(`📧 Email skipped: Unknown order status "${newStatus}"`);
-    return;
-  }
-
+export const sendOrderStatusUpdateEmail = async (orderOrId, providedItems = null, providedEmail = null, newStatus = 'ordered') => {
   try {
-    const html = buildEmailHtml({ order, items, status: newStatus, statusInfo, userEmail });
+    const { order, items, customerEmail } = await fetchFullOrderForEmail(orderOrId);
+    const recipient = providedEmail || customerEmail;
+    const finalItems = (providedItems && providedItems.length > 0) ? providedItems : items;
+    const activeKey = normalizeStageKey(newStatus);
+    const stageInfo = ORDER_STAGES.find(s => s.key === activeKey) || ORDER_STAGES[0];
+    const orderIdFormatted = formatOrderId(order.id);
 
-    const { data, error } = await resend.emails.send({
-      from: `${SENDER_NAME} <${SENDER_EMAIL}>`,
-      reply_to: REPLY_TO_EMAIL,
-      to: [userEmail],
-      subject: `${statusInfo.subject} — Order ${formatOrderId(order.id)}`,
-      html,
+    if (!recipient) {
+      console.warn('📧 Status email skipped: No recipient email address found for order', order.id);
+      return { success: false, reason: 'Recipient email missing' };
+    }
+
+    const html = buildLuxuryEmailHtml({
+      order: { ...order, status: activeKey },
+      items: finalItems,
+      stageKey: activeKey,
+      customerEmail: recipient
     });
 
-    if (error) {
-      console.error(`📧 Failed to send status update email (${newStatus}) to ${userEmail}:`, error.message || error);
-      if (error.statusCode === 403 || (error.message && error.message.includes('onboarding'))) {
-        console.warn('💡 Tip: On Resend free test mode (onboarding@resend.dev), emails can only be sent to the Resend account owner email. Verify a custom domain in Resend to send to all customer emails.');
-      }
-    } else {
-      console.log(`📧 Status update email (${newStatus}) sent to ${userEmail} (Resend ID: ${data?.id})`);
-    }
+    console.log(`📧 Dispatching Stage Update [${stageInfo.label}] email to customer ${recipient} (Order ${orderIdFormatted})...`);
+
+    return await dispatchEmail({
+      recipient,
+      subject: `${stageInfo.subject} — Order ${orderIdFormatted}`,
+      html,
+    });
   } catch (err) {
-    console.error(`📧 Error sending status update email (${newStatus}):`, err.message);
+    console.error(`📧 Unexpected error in sendOrderStatusUpdateEmail (${newStatus}):`, err.message);
+    return { success: false, error: err.message };
   }
 };

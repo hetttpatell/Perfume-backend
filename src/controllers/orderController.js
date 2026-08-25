@@ -14,13 +14,13 @@ export const createOrderSchema = z.object({
       engravingText: z.string().optional()
     })).min(1, 'Order must contain at least one item'),
     shippingAddress: z.object({
-      fullName: z.string().min(1, 'Full name is required'),
-      phone: z.string().min(1, 'Phone number is required'),
-      street: z.string().min(1, 'Street address is required'),
-      city: z.string().min(1, 'City is required'),
+      fullName: z.string().min(2, 'Full name must be at least 2 characters'),
+      phone: z.string().min(10, 'Phone number must be at least 10 digits'),
+      street: z.string().min(3, 'Street address is required'),
+      city: z.string().min(2, 'City is required'),
       state: z.string().optional(),
-      postalCode: z.string().min(1, 'Postal code is required'),
-      country: z.string().min(1, 'Country is required')
+      postalCode: z.string().regex(/^\d{6}$/, 'Postal PIN code must be a valid 6-digit Indian PIN code'),
+      country: z.string().default('India')
     }),
     // Guest checkout fields (used when user is not authenticated)
     guestEmail: z.string().email('Valid email is required for guest checkout').optional(),
@@ -140,15 +140,9 @@ export const createOrder = async (req, res, next) => {
       await supabase.from('cart_items').delete().eq('user_id', userId);
     }
 
-    // Fire-and-forget: Send order confirmation email with invoice
+    // Fire-and-forget: Send order confirmation email with luxury invoice & 4-stage tracking
     (async () => {
       try {
-        const { data: orderItems } = await supabase
-          .from('order_items')
-          .select('*, product:products(name, french_name, image_url)')
-          .eq('order_id', order.id);
-
-        // Resolve customer email: authenticated user → guest email
         let customerEmail = null;
         if (!isGuest) {
           customerEmail = req.user?.email || req.user?.user_metadata?.email || shippingAddress?.email;
@@ -161,14 +155,10 @@ export const createOrder = async (req, res, next) => {
             customerEmail = authUser?.email;
           }
         } else {
-          customerEmail = guestEmail;
+          customerEmail = guestEmail || shippingAddress?.email;
         }
 
-        if (customerEmail) {
-          await sendOrderConfirmationEmail(order, orderItems || [], customerEmail);
-        } else {
-          console.warn('📧 Order email skipped: Could not resolve customer email for order', order.id);
-        }
+        await sendOrderConfirmationEmail(order, null, customerEmail);
       } catch (emailErr) {
         console.error('Non-blocking error sending order confirmation email:', emailErr.message);
       }
