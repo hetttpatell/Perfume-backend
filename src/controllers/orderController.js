@@ -14,14 +14,19 @@ export const createOrderSchema = z.object({
       engravingText: z.string().optional()
     })).min(1, 'Order must contain at least one item'),
     shippingAddress: z.object({
-      fullName: z.string().optional(),
-      phone: z.string().optional(),
+      fullName: z.string().min(1, 'Full name is required'),
+      phone: z.string().min(1, 'Phone number is required'),
       street: z.string().min(1, 'Street address is required'),
       city: z.string().min(1, 'City is required'),
       state: z.string().optional(),
       postalCode: z.string().min(1, 'Postal code is required'),
       country: z.string().min(1, 'Country is required')
     }),
+    // Guest checkout fields (used when user is not authenticated)
+    guestEmail: z.string().email('Valid email is required for guest checkout').optional(),
+    guestName: z.string().optional(),
+    guestPhone: z.string().optional(),
+    orderNotes: z.string().optional(),
     discountCode: z.string().optional(),
     saveToProfile: z.boolean().optional()
   })
@@ -29,8 +34,14 @@ export const createOrderSchema = z.object({
 
 export const createOrder = async (req, res, next) => {
   try {
-    const userId = req.user.id;
-    const { items, shippingAddress, discountCode, saveToProfile = true } = req.body;
+    const userId = req.user?.id || null;
+    const isGuest = !userId;
+    const { items, shippingAddress, discountCode, saveToProfile = true, guestEmail, guestName, guestPhone, orderNotes } = req.body;
+
+    // For guest checkout, email is mandatory
+    if (isGuest && !guestEmail) {
+      return res.status(400).json({ success: false, error: 'Email address is required for guest checkout' });
+    }
 
     let subtotal = items.reduce((acc, item) => acc + (item.unitPrice * item.quantity), 0);
     let discountAmount = 0;
@@ -50,16 +61,25 @@ export const createOrder = async (req, res, next) => {
 
     const total = Math.max(0, subtotal - discountAmount);
 
+    // Build order record — user_id is null for guest orders
+    const orderInsert = {
+      user_id: userId,
+      status: 'ordered',
+      subtotal,
+      discount_amount: discountAmount,
+      total,
+      shipping_address: shippingAddress,
+      ...(isGuest ? {
+        guest_email: guestEmail,
+        guest_name: guestName || shippingAddress.fullName,
+        guest_phone: guestPhone || shippingAddress.phone
+      } : {}),
+      ...(orderNotes ? { order_notes: orderNotes } : {})
+    };
+
     const { data: order, error: orderError } = await supabase
       .from('orders')
-      .insert({
-        user_id: userId,
-        status: 'ordered',
-        subtotal,
-        discount_amount: discountAmount,
-        total,
-        shipping_address: shippingAddress
-      })
+      .insert(orderInsert)
       .select()
       .single();
 
@@ -81,8 +101,8 @@ export const createOrder = async (req, res, next) => {
     // Invalidate user orders cache
     serverCache.clearPattern('user_orders_');
 
-    // Save shipping address & phone details to User Profile in Database if requested / default
-    if (saveToProfile) {
+    // Save shipping address & phone details to User Profile in Database if requested (authenticated users only)
+    if (!isGuest && saveToProfile) {
       try {
         const { fullName, phone, street, city, state, postalCode, country } = shippingAddress;
 
@@ -115,8 +135,10 @@ export const createOrder = async (req, res, next) => {
       }
     }
 
-    // Clear user cart
-    await supabase.from('cart_items').delete().eq('user_id', userId);
+    // Clear user cart (authenticated users only — guests use local cart)
+    if (!isGuest) {
+      await supabase.from('cart_items').delete().eq('user_id', userId);
+    }
 
     // Fire-and-forget: Send order confirmation email with invoice
     (async () => {
@@ -126,16 +148,20 @@ export const createOrder = async (req, res, next) => {
           .select('*, product:products(name, french_name, image_url)')
           .eq('order_id', order.id);
 
-        let customerEmail = req.user?.email || req.user?.user_metadata?.email || shippingAddress?.email;
-
-        if (!customerEmail && userId) {
-          const { data: profile } = await supabaseAdmin.from('profiles').select('email').eq('id', userId).single();
-          customerEmail = profile?.email;
-        }
-
-        if (!customerEmail && userId) {
-          const { data: { user: authUser } } = await supabaseAdmin.auth.admin.getUserById(userId);
-          customerEmail = authUser?.email;
+        // Resolve customer email: authenticated user → guest email
+        let customerEmail = null;
+        if (!isGuest) {
+          customerEmail = req.user?.email || req.user?.user_metadata?.email || shippingAddress?.email;
+          if (!customerEmail && userId) {
+            const { data: profile } = await supabaseAdmin.from('profiles').select('email').eq('id', userId).single();
+            customerEmail = profile?.email;
+          }
+          if (!customerEmail && userId) {
+            const { data: { user: authUser } } = await supabaseAdmin.auth.admin.getUserById(userId);
+            customerEmail = authUser?.email;
+          }
+        } else {
+          customerEmail = guestEmail;
         }
 
         if (customerEmail) {

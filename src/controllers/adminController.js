@@ -465,8 +465,8 @@ export const updateOrderStatusAdmin = async (req, res, next) => {
           .select('*, product:products(name, french_name, image_url)')
           .eq('order_id', orderId);
 
-        // Look up customer email from user_id via Profiles & Supabase Auth & shipping address
-        let customerEmail = updated.shipping_address?.email || null;
+        // Look up customer email from guest_email, shipping_address, or user_id via Profiles & Supabase Auth
+        let customerEmail = updated.guest_email || updated.shipping_address?.email || null;
         if (!customerEmail && updated.user_id) {
           const { data: profile } = await supabaseAdmin.from('profiles').select('email').eq('id', updated.user_id).single();
           customerEmail = profile?.email || null;
