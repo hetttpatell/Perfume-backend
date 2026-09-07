@@ -19,8 +19,8 @@ export const createOrderSchema = z.object({
       street: z.string().min(3, 'Street address is required'),
       city: z.string().min(2, 'City is required'),
       state: z.string().optional(),
-      postalCode: z.string().regex(/^\d{6}$/, 'Postal PIN code must be a valid 6-digit Indian PIN code'),
-      country: z.string().default('India')
+      postalCode: z.string().regex(/^(\d{5}(-\d{4})?|\d{6})$/, 'Postal code must be a valid 5-digit US ZIP code or postal code'),
+      country: z.string().default('United States')
     }),
     // Guest checkout fields (used when user is not authenticated)
     guestEmail: z.string().email('Valid email is required for guest checkout').optional(),
