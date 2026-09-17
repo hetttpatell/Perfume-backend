@@ -148,3 +148,48 @@ export const processAndStoreHeroWebpImage = async ({
   };
 };
 
+/**
+ * Process raw hero sub-element image buffer (PNG, JPG, WEBP), convert to crisp .webp format,
+ * preserving transparent backgrounds for botanical cutout display in the Hero section.
+ */
+export const processAndStoreHeroSubElementWebpImage = async ({
+  fileBuffer,
+  originalName,
+  slot = 1,
+  productId = 'temp-product'
+}) => {
+  if (!fileBuffer) {
+    throw new Error('Sub-element image file buffer is required');
+  }
+
+  // Optimize to 800x800 max inside bounding box with quality 90 to preserve crisp alpha edges
+  const webpBuffer = await sharp(fileBuffer)
+    .resize({ width: 800, height: 800, fit: 'inside', withoutEnlargement: true })
+    .webp({ quality: 90, effort: 4 })
+    .toBuffer();
+
+  const metadata = await sharp(webpBuffer).metadata();
+  const imageUrl = `data:image/webp;base64,${webpBuffer.toString('base64')}`;
+
+  const sanitizeName = (originalName || `subelement-${slot}`)
+    .replace(/\.[^/.]+$/, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '-');
+
+  const timestamp = Date.now();
+  const safeProdId = (productId || 'general').replace(/[^a-z0-9]/g, '-');
+  const filePath = `products/${safeProdId}/sub-${slot}-${sanitizeName}-${timestamp}.webp`;
+
+  return {
+    public_url: imageUrl,
+    image_url: imageUrl,
+    file_path: filePath,
+    format: 'webp',
+    slot,
+    width: metadata.width,
+    height: metadata.height,
+    sizeBytes: webpBuffer.length
+  };
+};
+
+

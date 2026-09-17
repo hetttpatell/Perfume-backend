@@ -43,12 +43,75 @@ export const getAllProductsFromDb = async () => {
     imagesMap.set(img.product_id, list);
   });
 
-  const fullProducts = products.map(p => ({
-    ...p,
-    sizes: sizesMap.get(p.id) || [],
-    scentDetails: scentMap.get(p.id) || [],
-    images: imagesMap.get(p.id) || []
-  }));
+  const fullProducts = products.map(p => {
+    const pImages = imagesMap.get(p.id) || [];
+
+    // Extract sub-element 1 and 2 records
+    const sub1Rec = pImages.find(img => img.alt_text && (
+      img.alt_text === 'hero_subelement_1' || 
+      img.alt_text.includes('hero_subelement_1') || 
+      img.alt_text.includes('"slot":1') ||
+      img.alt_text.includes('"slot": 1')
+    ));
+    const sub2Rec = pImages.find(img => img.alt_text && (
+      img.alt_text === 'hero_subelement_2' || 
+      img.alt_text.includes('hero_subelement_2') || 
+      img.alt_text.includes('"slot":2') ||
+      img.alt_text.includes('"slot": 2')
+    ));
+
+    let heroSubElement1 = null;
+    let heroSubElement2 = null;
+
+    if (sub1Rec) {
+      try {
+        const parsed = JSON.parse(sub1Rec.alt_text);
+        heroSubElement1 = {
+          ...parsed,
+          src: sub1Rec.image_url,
+          name: parsed.name || p.hero_note_1 || 'ACCORD I',
+          accord: parsed.accord || 'ACCORD I',
+          origin: parsed.origin || ''
+        };
+      } catch (e) {
+        heroSubElement1 = {
+          src: sub1Rec.image_url,
+          name: p.hero_note_1 || 'ACCORD I',
+          accord: 'ACCORD I',
+          origin: ''
+        };
+      }
+    }
+
+    if (sub2Rec) {
+      try {
+        const parsed = JSON.parse(sub2Rec.alt_text);
+        heroSubElement2 = {
+          ...parsed,
+          src: sub2Rec.image_url,
+          name: parsed.name || p.hero_note_2 || 'ACCORD II',
+          accord: parsed.accord || 'ACCORD II',
+          origin: parsed.origin || ''
+        };
+      } catch (e) {
+        heroSubElement2 = {
+          src: sub2Rec.image_url,
+          name: p.hero_note_2 || 'ACCORD II',
+          accord: 'ACCORD II',
+          origin: ''
+        };
+      }
+    }
+
+    return {
+      ...p,
+      sizes: sizesMap.get(p.id) || [],
+      scentDetails: scentMap.get(p.id) || [],
+      images: pImages,
+      heroSubElement1,
+      heroSubElement2
+    };
+  });
 
   serverCache.set('master_products_list', fullProducts, 300000);
   return fullProducts;
@@ -202,6 +265,71 @@ export const createProduct = async (req, res, next) => {
       }
     }
 
+    // Task side: Store Hero Sub-Elements (Slot 1 and Slot 2) in product_images
+    const sub1Input = req.body.heroSubElement1 || (req.body.heroSubImage1 ? {
+      src: req.body.heroSubImage1,
+      name: req.body.heroSubName1,
+      accord: req.body.heroSubAccord1,
+      origin: req.body.heroSubOrigin1
+    } : null);
+
+    const sub2Input = req.body.heroSubElement2 || (req.body.heroSubImage2 ? {
+      src: req.body.heroSubImage2,
+      name: req.body.heroSubName2,
+      accord: req.body.heroSubAccord2,
+      origin: req.body.heroSubOrigin2
+    } : null);
+
+    if (sub1Input?.src || sub1Input?.image_url) {
+      const src1 = sub1Input.src || sub1Input.image_url;
+      await supabaseAdmin
+        .from('product_images')
+        .delete()
+        .eq('product_id', productId)
+        .like('alt_text', '%hero_subelement_1%');
+
+      await supabaseAdmin
+        .from('product_images')
+        .insert({
+          product_id: productId,
+          image_url: src1,
+          alt_text: JSON.stringify({
+            tag: 'hero_subelement_1',
+            slot: 1,
+            name: sub1Input.name || heroNote1 || 'ACCORD I',
+            accord: sub1Input.accord || 'ACCORD I',
+            origin: sub1Input.origin || 'Botanical Essence'
+          }),
+          format: 'webp',
+          is_primary: false
+        });
+    }
+
+    if (sub2Input?.src || sub2Input?.image_url) {
+      const src2 = sub2Input.src || sub2Input.image_url;
+      await supabaseAdmin
+        .from('product_images')
+        .delete()
+        .eq('product_id', productId)
+        .like('alt_text', '%hero_subelement_2%');
+
+      await supabaseAdmin
+        .from('product_images')
+        .insert({
+          product_id: productId,
+          image_url: src2,
+          alt_text: JSON.stringify({
+            tag: 'hero_subelement_2',
+            slot: 2,
+            name: sub2Input.name || heroNote2 || 'ACCORD II',
+            accord: sub2Input.accord || 'ACCORD II',
+            origin: sub2Input.origin || 'Rare Extraction'
+          }),
+          format: 'webp',
+          is_primary: false
+        });
+    }
+
     // Run scent details insertion and image association concurrently
     const sideTasks = [];
 
@@ -330,6 +458,79 @@ export const updateProduct = async (req, res, next) => {
       })());
     }
 
+    // Hero Sub-Elements updating
+    const targetSub1 = updates.heroSubElement1 !== undefined ? updates.heroSubElement1 : (updates.heroSubImage1 ? {
+      src: updates.heroSubImage1,
+      name: updates.heroSubName1,
+      accord: updates.heroSubAccord1,
+      origin: updates.heroSubOrigin1
+    } : undefined);
+
+    const targetSub2 = updates.heroSubElement2 !== undefined ? updates.heroSubElement2 : (updates.heroSubImage2 ? {
+      src: updates.heroSubImage2,
+      name: updates.heroSubName2,
+      accord: updates.heroSubAccord2,
+      origin: updates.heroSubOrigin2
+    } : undefined);
+
+    if (targetSub1 !== undefined || targetSub2 !== undefined) {
+      sideTasks.push((async () => {
+        if (targetSub1 !== undefined) {
+          await supabaseAdmin
+            .from('product_images')
+            .delete()
+            .eq('product_id', id)
+            .like('alt_text', '%hero_subelement_1%');
+
+          const sub1Src = targetSub1?.src || targetSub1?.image_url;
+          if (sub1Src) {
+            await supabaseAdmin
+              .from('product_images')
+              .insert({
+                product_id: id,
+                image_url: sub1Src,
+                alt_text: JSON.stringify({
+                  tag: 'hero_subelement_1',
+                  slot: 1,
+                  name: targetSub1.name || updates.heroNote1 || updated.hero_note_1 || 'ACCORD I',
+                  accord: targetSub1.accord || 'ACCORD I',
+                  origin: targetSub1.origin || 'Botanical Essence'
+                }),
+                format: 'webp',
+                is_primary: false
+              });
+          }
+        }
+
+        if (targetSub2 !== undefined) {
+          await supabaseAdmin
+            .from('product_images')
+            .delete()
+            .eq('product_id', id)
+            .like('alt_text', '%hero_subelement_2%');
+
+          const sub2Src = targetSub2?.src || targetSub2?.image_url;
+          if (sub2Src) {
+            await supabaseAdmin
+              .from('product_images')
+              .insert({
+                product_id: id,
+                image_url: sub2Src,
+                alt_text: JSON.stringify({
+                  tag: 'hero_subelement_2',
+                  slot: 2,
+                  name: targetSub2.name || updates.heroNote2 || updated.hero_note_2 || 'ACCORD II',
+                  accord: targetSub2.accord || 'ACCORD II',
+                  origin: targetSub2.origin || 'Rare Extraction'
+                }),
+                format: 'webp',
+                is_primary: false
+              });
+          }
+        }
+      })());
+    }
+
     if (updates.topNotes || updates.heartNotes || updates.baseNotes) {
       sideTasks.push(
         supabaseAdmin
@@ -362,7 +563,11 @@ export const updateProduct = async (req, res, next) => {
 
         if (dbImages && dbImages.length > 0) {
           const toDelete = dbImages
-            .filter(img => img.alt_text !== 'hero_image' && !validUrls.has(img.image_url))
+            .filter(img => 
+              img.alt_text !== 'hero_image' && 
+              !img.alt_text?.includes('hero_subelement') &&
+              !validUrls.has(img.image_url)
+            )
             .map(img => img.id);
 
           if (toDelete.length > 0) {

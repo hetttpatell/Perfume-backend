@@ -1,6 +1,7 @@
 import express from 'express';
 import { 
   uploadHeroImage,
+  uploadHeroSubElementImage,
   uploadProductImage, 
   uploadBatchProductImages,
   getProductImages, 
@@ -38,6 +39,7 @@ router.use(requireAdmin);
 
 // POST endpoint for single, batch, and hero section image uploads
 router.post('/images/upload-hero', uploadSingleImage, uploadHeroImage);
+router.post('/images/upload-hero-subelement', uploadSingleImage, uploadHeroSubElementImage);
 router.post('/images/upload', uploadSingleImage, uploadProductImage);
 router.post('/images/upload-batch', uploadMultipleImages, uploadBatchProductImages);
 router.post('/images/delete', deleteProductImage);

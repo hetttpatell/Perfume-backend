@@ -1,8 +1,55 @@
-import { processAndStoreWebpImage, processAndStoreHeroWebpImage } from '../services/imageService.js';
+import { 
+  processAndStoreWebpImage, 
+  processAndStoreHeroWebpImage, 
+  processAndStoreHeroSubElementWebpImage 
+} from '../services/imageService.js';
 import { supabaseAdmin, supabase } from '../config/supabase.js';
 import { serverCache } from '../services/cacheService.js';
 import { sendOrderStatusUpdateEmail } from '../services/emailService.js';
 import { getAllProductsFromDb } from './productController.js';
+
+export const uploadHeroSubElementImage = async (req, res, next) => {
+  try {
+    const { productId, slot = 1 } = req.body || {};
+
+    if (!req.file && !req.body.imageBase64) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Image file upload or Base64 string is required for sub-element photo' 
+      });
+    }
+
+    let fileBuffer;
+    let originalName = `hero-subelement-${slot}`;
+
+    if (req.file) {
+      fileBuffer = req.file.buffer;
+      originalName = req.file.originalname;
+    } else if (req.body.imageBase64) {
+      const base64Data = req.body.imageBase64.replace(/^data:image\/\w+;base64,/, '');
+      fileBuffer = Buffer.from(base64Data, 'base64');
+    }
+
+    const processedSubImage = await processAndStoreHeroSubElementWebpImage({
+      fileBuffer,
+      originalName,
+      slot: Number(slot) || 1,
+      productId: productId || 'temp-product'
+    });
+
+    res.status(201).json({
+      success: true,
+      message: `Hero sub-element ${slot} photo converted to .webp Base64 successfully`,
+      image: processedSubImage
+    });
+  } catch (error) {
+    console.error('Error in uploadHeroSubElementImage:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message || 'Sub-element image upload and conversion failed' 
+    });
+  }
+};
 
 export const uploadHeroImage = async (req, res, next) => {
   try {
