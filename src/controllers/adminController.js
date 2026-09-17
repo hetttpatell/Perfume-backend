@@ -37,6 +37,8 @@ export const uploadHeroSubElementImage = async (req, res, next) => {
       productId: productId || 'temp-product'
     });
 
+    serverCache.clearAll();
+
     res.status(201).json({
       success: true,
       message: `Hero sub-element ${slot} photo converted to .webp Base64 successfully`,
@@ -87,6 +89,8 @@ export const uploadHeroImage = async (req, res, next) => {
         console.warn('Notice updating hero_image_url column:', err.message);
       }
     }
+
+    serverCache.clearAll();
 
     res.status(201).json({
       success: true,
@@ -149,6 +153,8 @@ export const uploadProductImage = async (req, res, next) => {
       }
     }
 
+    serverCache.clearAll();
+
     res.status(201).json({
       success: true,
       message: 'Product image automatically converted to .webp and stored in database successfully',
@@ -184,6 +190,8 @@ export const uploadBatchProductImages = async (req, res, next) => {
         processedImages.push(processed.public_url);
       }
     }
+
+    serverCache.clearAll();
 
     res.status(201).json({
       success: true,
@@ -255,6 +263,8 @@ export const deleteProductImage = async (req, res, next) => {
       return res.status(500).json({ success: false, error: deleteErr.message });
     }
 
+    serverCache.clearAll();
+
     res.status(200).json({
       success: true,
       message: 'Product image deleted successfully'
@@ -294,6 +304,8 @@ export const toggleProductFlags = async (req, res, next) => {
     if (error) {
       return res.status(500).json({ success: false, error: error.message });
     }
+
+    serverCache.clearAll();
 
     res.status(200).json({
       success: true,
@@ -725,6 +737,8 @@ export const toggleProductStock = async (req, res, next) => {
     if (error) {
       return res.status(500).json({ success: false, error: error.message });
     }
+
+    serverCache.clearAll();
 
     res.status(200).json({
       success: true,
