@@ -28,21 +28,70 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
 
 // GZIP Compression Middleware
 app.use(compression());
 
 // Security Headers via Helmet
-app.use(helmet());
-
-// Strict CORS Policy - Restricts cross-origin HTTP requests
-app.use(cors({
-  origin: [CLIENT_ORIGIN, 'http://localhost:5173', 'http://127.0.0.1:5173'],
-  credentials: true,
-  methods: ['POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Lune-Signature']
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" }
 }));
+
+// Parse configured CLIENT_ORIGIN (supports comma-separated list)
+const configuredOrigins = (process.env.CLIENT_ORIGIN || '')
+  .split(',')
+  .map(o => o.trim().replace(/\/$/, ''))
+  .filter(Boolean);
+
+const allowedOrigins = new Set([
+  'https://www.lunefragrance.com',
+  'https://lunefragrance.com',
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:3000',
+  ...configuredOrigins
+]);
+
+// CORS configuration supporting credentials, preflight OPTIONS, and custom domains
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Allow non-browser requests (curl, server-to-server, health checkers)
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.has(origin)) {
+      return callback(null, true);
+    }
+
+    try {
+      const parsed = new URL(origin);
+      // Allow root and any subdomain of lunefragrance.com
+      if (parsed.hostname === 'lunefragrance.com' || parsed.hostname.endsWith('.lunefragrance.com')) {
+        return callback(null, true);
+      }
+      // Allow Vercel or Render preview domains
+      if (parsed.hostname.endsWith('.vercel.app') || parsed.hostname.endsWith('.onrender.com')) {
+        return callback(null, true);
+      }
+    } catch {
+      // Invalid URL format
+    }
+
+    // In non-production environments, allow access
+    if (process.env.NODE_ENV !== 'production') {
+      return callback(null, true);
+    }
+
+    return callback(null, false);
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Lune-Signature'],
+  optionsSuccessStatus: 200
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
 // Request Body Parsers (Only JSON and Multipart payloads allowed)
 app.use(express.json({ limit: '15mb' }));
